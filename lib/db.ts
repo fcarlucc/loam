@@ -100,7 +100,7 @@ function migrate(conn: DatabaseSync) {
   conn.exec("CREATE INDEX IF NOT EXISTS messages_parent_idx ON messages(parent_id)");
 
   // Full-text index over message text for search, kept in sync by triggers (cascade deletes included).
-  // Accents are ignored, so "perche" finds "perché".
+  // Accents are ignored, so "cafe" finds "café".
   const hasIndex = conn.prepare("SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'").get();
   conn.exec("BEGIN");
   try {

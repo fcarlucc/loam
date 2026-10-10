@@ -85,7 +85,7 @@ export function SettingsSidebar({
                 onChange={(e) => (e.target.value ? update({ system: e.target.value }) : update({}, "system"))}
                 rows={6}
                 maxLength={SYSTEM_PROMPT_MAX}
-                placeholder="e.g. Always answer in Italian. Keep answers short."
+                placeholder="e.g. Keep answers short and use bullet points."
                 className={`${fieldClass} resize-y`}
               />
               <span className="text-xs text-muted">Instructions the model follows for the whole conversation.</span>
