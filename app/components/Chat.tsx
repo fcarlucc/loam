@@ -52,6 +52,7 @@ const nearlyFull = (s?: ReplyStats) => !!s?.contextSize && s.contextUsed / s.con
 
 export function Chat({
   chatId,
+  focusMessageId,
   initialSettings,
   modelInfo,
   onSaveDefaults,
@@ -70,6 +71,7 @@ export function Chat({
   onSettingsOpenChange,
 }: {
   chatId: number | null;
+  focusMessageId: number | null;
   initialSettings: Settings;
   modelInfo: ModelInfo | null;
   onSaveDefaults: (settings: Settings) => Promise<boolean>;
@@ -95,6 +97,8 @@ export function Chat({
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>(initialSettings);
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
+  // A message opened from search: scrolled into view and highlighted for a moment.
+  const [highlight, setHighlight] = useState<number | null>(focusMessageId);
 
   // The reply being streamed: its request, and the chat id once the server has accepted it.
   const activeRef = useRef<{ controller: AbortController; chatId: number | null } | null>(null);
@@ -149,6 +153,14 @@ export function Chat({
     if (force || el.scrollTop + el.clientHeight >= height - 8) el.scrollTop = el.scrollHeight;
     followRef.current = { height: el.scrollHeight, force: false };
   }, [messages, loading]);
+
+  // After the follow-the-bottom scroll above, so this one wins.
+  useEffect(() => {
+    if (loading || highlight === null) return;
+    document.querySelector(`[data-message-id="${highlight}"]`)?.scrollIntoView({ block: "center" });
+    const timer = setTimeout(() => setHighlight(null), 2500);
+    return () => clearTimeout(timer);
+  }, [loading, highlight]);
 
   useEffect(() => {
     if (settingsOpen && focusSettingsOnOpen.current) systemPromptRef.current?.focus();
@@ -390,8 +402,12 @@ export function Chat({
                     );
                   }
                   return (
-                    <div key={key} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
-                      <div className="whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg">
+                    <div key={key} data-message-id={m.id} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
+                      <div
+                        className={`whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg transition-shadow ${
+                          highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""
+                        }`}
+                      >
                         {m.content}
                       </div>
                       {m.id !== undefined && !streaming && (
@@ -410,7 +426,13 @@ export function Chat({
                   );
                 }
                 return (
-                  <div key={key} className="group/msg max-w-[95%]">
+                  <div
+                    key={key}
+                    data-message-id={m.id}
+                    className={`group/msg max-w-[95%] rounded-xl transition-shadow ${
+                      highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""
+                    }`}
+                  >
                     {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && <TypingDots />}
                     {m.content && !(streaming && isLast) && (
                       // The latest reply, and replies with versions, always show their actions; others on hover or focus.

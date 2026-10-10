@@ -36,7 +36,8 @@ export function AppShell() {
   const [chats, setChats] = useState<ChatSummary[]>([]);
   // `key` changes when another chat is opened, so Chat remounts with fresh state.
   // `id` alone changes when Chat saves the new conversation it is already showing.
-  const [view, setView] = useState<{ key: number; id: number | null }>({ key: 0, id: null });
+  // `focus` is a message to scroll to and highlight once the chat is open (from search).
+  const [view, setView] = useState<{ key: number; id: number | null; focus?: number | null }>({ key: 0, id: null });
   const [draft, setDraft] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState("");
@@ -143,6 +144,21 @@ export function AppShell() {
     if (chatModel && models.includes(chatModel)) setModel(chatModel);
   };
 
+  // Opens a search result: switch the chat to the branch that holds the message, then show it there.
+  const openResult = async (id: number, messageId: number | null) => {
+    if (messageId !== null) {
+      await fetch(`/api/chats/${id}/select`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId }),
+      }).catch(() => {});
+    }
+    setMobileOpen(false);
+    setView((v) => ({ key: v.key + 1, id, focus: messageId }));
+    const chatModel = chats.find((c) => c.id === id)?.model;
+    if (chatModel && models.includes(chatModel)) setModel(chatModel);
+  };
+
   const remove = async (id: number) => {
     // Leave the chat first, so a reply still streaming into it stops before it is deleted.
     if (id === view.id) open(null);
@@ -172,6 +188,7 @@ export function AppShell() {
       onSelect={open}
       onDelete={remove}
       onRename={rename}
+      onOpenResult={(id, messageId) => void openResult(id, messageId)}
       onOpenModels={() => {
         setMobileOpen(false);
         setModelsOpen(true);
@@ -196,6 +213,7 @@ export function AppShell() {
           <Chat
             key={view.key}
             chatId={view.id}
+            focusMessageId={view.focus ?? null}
             initialSettings={defaults}
             modelInfo={modelInfo?.model === model ? modelInfo.info : null}
             onSaveDefaults={saveDefaults}

@@ -60,3 +60,13 @@ export type LoadedModel = {
   expiresAt: string | null; // when Ollama unloads it if unused
   contextLength: number | null;
 };
+
+// A search result: a chat whose title matches (messageId null) or a matching message.
+// `snippet` wraps matched words in MARK_START / MARK_END (see lib/format.ts).
+export type SearchHit = {
+  chatId: number;
+  title: string;
+  messageId: number | null;
+  role: Role | null;
+  snippet: string | null;
+};

@@ -5,6 +5,7 @@ import type { ChatSummary } from "@/lib/types";
 import { ChatIcon, CubeIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
 import { OllamaStatus, type useOllamaStatus } from "./OllamaStatus";
 import { ThemeToggle } from "./ThemeToggle";
+import { SearchBox, SearchResults, useChatSearch } from "./ChatSearch";
 
 const DAY = 86_400_000;
 
@@ -144,6 +145,7 @@ export function Sidebar({
   onDelete,
   onRename,
   onOpenModels,
+  onOpenResult,
 }: {
   ollama: ReturnType<typeof useOllamaStatus>;
   chats: ChatSummary[];
@@ -153,7 +155,9 @@ export function Sidebar({
   onDelete: (id: number) => void;
   onRename: (id: number, title: string) => void;
   onOpenModels: () => void;
+  onOpenResult: (chatId: number, messageId: number | null) => void;
 }) {
+  const search = useChatSearch();
   return (
     <div className="flex h-full w-72 flex-col gap-3 border-r border-border bg-panel p-3">
       <div className="flex items-center gap-2 px-1 pt-1">
@@ -170,8 +174,12 @@ export function Sidebar({
         New chat
       </button>
 
+      <SearchBox query={search.query} onChange={search.setQuery} />
+
       <nav aria-label="Saved chats" className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
-        {chats.length === 0 ? (
+        {search.active ? (
+          <SearchResults hits={search.hits} onOpen={onOpenResult} />
+        ) : chats.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-10 text-center text-sm text-muted">
             <ChatIcon width={22} height={22} />
             <p>No saved chats.</p>

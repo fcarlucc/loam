@@ -15,3 +15,7 @@ export function formatUnload(expiresAt: string | null, now = Date.now()) {
   if (ms <= 60 * 1000) return "unloads in less than a minute";
   return `unloads in ${Math.round(ms / 60000)} min if unused`;
 }
+
+// Search snippets wrap matched words in these control characters (never typed by users).
+export const MARK_START = "\u0002";
+export const MARK_END = "\u0003";

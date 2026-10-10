@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isKeepAlive, KEEP_ALIVE_DEFAULT, parseSettings } from "./settings";
-import type { ChatMessage, ChatSettings, ChatSummary, ReplyStats, Role } from "./types";
+import type { ChatMessage, ChatSettings, ChatSummary, ReplyStats, Role, SearchHit } from "./types";
 
 // Title of chats created by earlier versions before their first message.
 export const DEFAULT_TITLE = "New chat";
@@ -71,6 +71,33 @@ function migrate(conn: DatabaseSync) {
     }
   }
   conn.exec("CREATE INDEX IF NOT EXISTS messages_parent_idx ON messages(parent_id)");
+
+  // Full-text index over message text for search, kept in sync by triggers (cascade deletes included).
+  // Accents are ignored, so "perche" finds "perché".
+  const hasIndex = conn.prepare("SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'").get();
+  conn.exec("BEGIN");
+  try {
+    conn.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content, content = 'messages', content_rowid = 'id', tokenize = 'unicode61 remove_diacritics 2'
+      );
+      CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts (rowid, content) VALUES (new.id, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts (messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN
+        INSERT INTO messages_fts (messages_fts, rowid, content) VALUES ('delete', old.id, old.content);
+        INSERT INTO messages_fts (rowid, content) VALUES (new.id, new.content);
+      END;
+    `);
+    if (!hasIndex) conn.exec("INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')"); // index existing messages
+    conn.exec("COMMIT");
+  } catch (e) {
+    conn.exec("ROLLBACK");
+    throw e;
+  }
 }
 
 function hasColumn(conn: DatabaseSync, table: string, column: string) {
@@ -204,6 +231,35 @@ export function selectVersion(chatId: number, messageId: number) {
     leaf = child.id;
   }
   db().prepare("UPDATE chats SET leaf_id = ? WHERE id = ?").run(leaf, chatId);
+}
+
+// Chats whose title matches (if none of their messages does), then messages (any version) ranked by relevance.
+// The query is reduced to plain words, so user input can't break the search syntax; the last word may be partial.
+export function search(query: string, limit = 40): SearchHit[] {
+  const words = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  if (words.length === 0) return [];
+  const match = words.map((w, i) => `"${w}"${i === words.length - 1 ? "*" : ""}`).join(" ");
+  const like = `%${query.trim().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+  const titles = db()
+    .prepare(`SELECT id AS chatId, title FROM chats WHERE title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 10`)
+    .all(like) as { chatId: number; title: string }[];
+  const messages = db()
+    .prepare(
+      `SELECT m.chat_id AS chatId, c.title, m.id AS messageId, m.role,
+              snippet(messages_fts, 0, char(2), char(3), '…', 14) AS snippet -- see MARK_START / MARK_END
+         FROM messages_fts
+         JOIN messages m ON m.id = messages_fts.rowid
+         JOIN chats c ON c.id = m.chat_id
+        WHERE messages_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?`,
+    )
+    .all(match, limit) as SearchHit[];
+  // A title hit is only worth listing for chats that have no matching message.
+  const withMessages = new Set(messages.map((m) => m.chatId));
+  const titleHits = titles.filter((t) => !withMessages.has(t.chatId)).map((t) => ({ ...t, messageId: null, role: null, snippet: null }));
+  return [...titleHits, ...messages];
 }
 
 function getAppSetting(key: string): unknown {

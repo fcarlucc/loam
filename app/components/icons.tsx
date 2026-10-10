@@ -76,3 +76,6 @@ export const ChevronLeftIcon = (p: SVGProps<SVGSVGElement>) => (
 export const ChevronRightIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M9 6l6 6-6 6" /></svg>
 );
+export const SearchIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg>
+);
