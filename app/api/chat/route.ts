@@ -3,39 +3,14 @@ import { addMessage, createChat, DEFAULT_TITLE, getChat, getKeepAlive, getLeafId
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
 import { readNdjson } from "@/lib/ndjson";
-import { loadedContextLength, OLLAMA_URL, ollamaError } from "@/lib/ollama";
+import { type ChatChunk, loadedContextLength, OLLAMA_URL, ollamaError, toStats } from "@/lib/ollama";
 import { KEEP_ALIVE_DEFAULT, parseSettings } from "@/lib/settings";
 import type { ChatEvent, ReplyStats } from "@/lib/types";
-
-type ChatChunk = {
-  message?: { content?: string };
-  error?: string;
-  done?: boolean;
-  eval_count?: number;
-  eval_duration?: number;
-  prompt_eval_count?: number; // includes tokens reused from the cache
-  load_duration?: number;
-  total_duration?: number;
-};
 
 // The first message, whitespace collapsed, cut on a character boundary.
 function makeTitle(content: string) {
   const chars = Array.from(content.replace(/\s+/g, " "));
   return chars.length > 48 ? `${chars.slice(0, 47).join("")}…` : chars.join("");
-}
-
-function toStats(c: ChatChunk, contextSize: number | undefined): ReplyStats {
-  const tokens = c.eval_count ?? 0;
-  const promptTokens = c.prompt_eval_count ?? 0;
-  return {
-    tokens,
-    tokensPerSecond: c.eval_duration ? Math.round((tokens / (c.eval_duration / 1e9)) * 10) / 10 : 0,
-    promptTokens,
-    loadMs: Math.round((c.load_duration ?? 0) / 1e6),
-    totalMs: Math.round((c.total_duration ?? 0) / 1e6),
-    contextUsed: promptTokens + tokens,
-    ...(contextSize ? { contextSize } : {}),
-  };
 }
 
 // Streams a reply as NDJSON events (see ChatEvent). One of:

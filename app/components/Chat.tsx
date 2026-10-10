@@ -1,10 +1,9 @@
 "use client";
 
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
-import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { hasCustomSettings } from "@/lib/settings";
-import type { ChatEvent, ChatMessage, ChatSettings as Settings, ModelInfo, ReplyStats, Versions } from "@/lib/types";
+import type { ChatEvent, ChatMessage, ChatSettings as Settings, ModelInfo, Versions } from "@/lib/types";
 import { CopyButton } from "./CopyButton";
 import {
   ChevronLeftIcon,
@@ -18,6 +17,7 @@ import {
 } from "./icons";
 import { Markdown } from "./Markdown";
 import { ModelPicker } from "./ModelPicker";
+import { nearlyFull, StatsLine } from "./StatsLine";
 import { SETTINGS_SIDEBAR_ID, SettingsSidebar } from "./SettingsSidebar";
 
 const SUGGESTIONS = [
@@ -47,8 +47,6 @@ type Action =
   | { kind: "regenerate"; id: number }
   | { kind: "retry" };
 
-// A context window this full means Ollama will soon start dropping the oldest messages.
-const nearlyFull = (s?: ReplyStats) => !!s?.contextSize && s.contextUsed / s.contextSize >= 0.9;
 
 export function Chat({
   chatId,
@@ -643,27 +641,7 @@ function EditMessage({
   );
 }
 
-function StatsLine({ stats }: { stats: ReplyStats }) {
-  const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
-  const details = [
-    `${stats.promptTokens} tokens read, ${stats.tokens} generated`,
-    `total ${seconds(stats.totalMs)}`,
-    ...(stats.loadMs >= 500 ? [`of which ${seconds(stats.loadMs)} loading the model`] : []),
-  ].join(" · ");
-  return (
-    <span title={details} className="ml-1 self-center text-xs text-muted tabular-nums">
-      {stats.tokensPerSecond.toFixed(1)} tok/s · {stats.tokens} tokens
-      {stats.contextSize ? (
-        <span className={nearlyFull(stats) ? "text-danger" : undefined}>
-          {" "}
-          · context {formatTokens(stats.contextUsed)}/{formatTokens(stats.contextSize)}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-function TypingDots() {
+export function TypingDots() {
   return (
     <span role="status" className="inline-flex gap-1 align-middle">
       <span className="sr-only">The model is thinking…</span>

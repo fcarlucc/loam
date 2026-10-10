@@ -1,3 +1,5 @@
+import type { ReplyStats } from "./types";
+
 export const OLLAMA_URL = process.env.OLLAMA_HOST_URL ?? "http://localhost:11434";
 
 export type OllamaStatus = { running: boolean; version?: string; host: string };
@@ -30,4 +32,31 @@ export async function loadedContextLength(model: string) {
   } catch {
     return undefined;
   }
+}
+
+// One line of Ollama's streamed /api/chat response.
+export type ChatChunk = {
+  message?: { content?: string };
+  error?: string;
+  done?: boolean;
+  eval_count?: number;
+  eval_duration?: number;
+  prompt_eval_count?: number; // includes tokens reused from the cache
+  load_duration?: number;
+  total_duration?: number;
+};
+
+// Ollama's timings from the final chunk, as shown under a reply.
+export function toStats(c: ChatChunk, contextSize: number | undefined): ReplyStats {
+  const tokens = c.eval_count ?? 0;
+  const promptTokens = c.prompt_eval_count ?? 0;
+  return {
+    tokens,
+    tokensPerSecond: c.eval_duration ? Math.round((tokens / (c.eval_duration / 1e9)) * 10) / 10 : 0,
+    promptTokens,
+    loadMs: Math.round((c.load_duration ?? 0) / 1e6),
+    totalMs: Math.round((c.total_duration ?? 0) / 1e6),
+    contextUsed: promptTokens + tokens,
+    ...(contextSize ? { contextSize } : {}),
+  };
 }
