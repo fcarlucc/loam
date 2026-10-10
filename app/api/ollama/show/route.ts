@@ -3,9 +3,15 @@ import { jsonError } from "@/lib/http";
 import { OLLAMA_URL, ollamaError } from "@/lib/ollama";
 import type { ModelInfo } from "@/lib/types";
 
-type ShowResponse = { model_info?: Record<string, unknown>; parameters?: string; capabilities?: string[] };
+type ShowResponse = {
+  model_info?: Record<string, unknown>;
+  parameters?: string;
+  capabilities?: string[];
+  license?: string;
+  details?: { family?: string; parameter_size?: string; quantization_level?: string };
+};
 
-// What the settings panel needs about a model: its largest context window and its own default temperature, if any.
+// What the settings and models panels need about a model: context window, default temperature, details.
 export async function GET(request: Request) {
   const model = new URL(request.url).searchParams.get("model") ?? "";
   if (!isValidModelName(model)) return jsonError("Invalid model name", 400);
@@ -31,6 +37,10 @@ export async function GET(request: Request) {
     contextMax: Number.isFinite(contextMax) ? contextMax : null,
     temperature: Number.isFinite(temperature) ? temperature : null,
     capabilities: data.capabilities ?? [],
+    family: data.details?.family ?? null,
+    parameterSize: data.details?.parameter_size ?? null,
+    quantization: data.details?.quantization_level ?? null,
+    license: data.license ? data.license.trim().split("\n").slice(0, 3).join(" ").slice(0, 200) : null,
   };
   return Response.json(info);
 }

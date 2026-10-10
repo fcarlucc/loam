@@ -8,6 +8,7 @@ A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats
 - Stats under every reply (speed, tokens, how full the context is), with a warning before old messages get dropped
 - Chat history in the sidebar (rename, delete), grouped by date
 - Model picker next to the composer, with one-click download of popular models
+- Models & memory panel: what's loaded in RAM, free it, how long models stay loaded, model details, delete models
 - Start/stop Ollama from the sidebar; light, dark and system themes
 
 ## Requirements
@@ -59,7 +60,7 @@ Everything stays on this machine:
 app/api/chat           send, edit, regenerate or retry, streamed reply (and /stop)
 app/api/chats          list, rename, delete chats, per-chat settings, switch versions
 app/api/settings       defaults for new chats
-app/api/ollama         status, start/stop, models, model info, downloads
+app/api/ollama         status, start/stop, models (list, delete), model info, memory (ps, unload), downloads
 app/components         UI (AppShell, Chat, Sidebar, ModelPicker, …)
 lib/db.ts              SQLite schema, migrations and queries (messages form a tree of versions)
 proxy.ts               request guard for /api

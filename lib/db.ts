@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { parseSettings } from "./settings";
+import { isKeepAlive, KEEP_ALIVE_DEFAULT, parseSettings } from "./settings";
 import type { ChatMessage, ChatSettings, ChatSummary, ReplyStats, Role } from "./types";
 
 // Title of chats created by earlier versions before their first message.
@@ -206,14 +206,24 @@ export function selectVersion(chatId: number, messageId: number) {
   db().prepare("UPDATE chats SET leaf_id = ? WHERE id = ?").run(leaf, chatId);
 }
 
-// Settings applied to new chats.
-export function getDefaults(): ChatSettings {
-  const row = db().prepare("SELECT value FROM app_settings WHERE key = 'chat_defaults'").get() as { value: string } | undefined;
-  return parseSettings(parseJson(row?.value)) ?? {};
+function getAppSetting(key: string): unknown {
+  const row = db().prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as { value: string } | undefined;
+  return parseJson(row?.value);
 }
 
-export function setDefaults(settings: ChatSettings) {
+function setAppSetting(key: string, value: unknown) {
   db()
-    .prepare("INSERT INTO app_settings (key, value) VALUES ('chat_defaults', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-    .run(JSON.stringify(settings));
+    .prepare("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(key, JSON.stringify(value));
 }
+
+// Settings applied to new chats.
+export const getDefaults = (): ChatSettings => parseSettings(getAppSetting("chat_defaults")) ?? {};
+export const setDefaults = (settings: ChatSettings) => setAppSetting("chat_defaults", settings);
+
+// How long models stay in memory after a reply (seconds, see KEEP_ALIVE_CHOICES).
+export const getKeepAlive = (): number => {
+  const value = getAppSetting("keep_alive");
+  return isKeepAlive(value) ? value : KEEP_ALIVE_DEFAULT;
+};
+export const setKeepAlive = (seconds: number) => setAppSetting("keep_alive", seconds);

@@ -34,5 +34,29 @@ export type ChatEvent =
   | { type: "done"; stats?: ReplyStats }
   | { type: "error"; message: string };
 
-// What the settings panel needs to know about a model (from /api/ollama/show).
-export type ModelInfo = { contextMax: number | null; temperature: number | null; capabilities: string[] };
+// What the settings and models panels need to know about a model (from /api/ollama/show).
+export type ModelInfo = {
+  contextMax: number | null;
+  temperature: number | null;
+  capabilities: string[];
+  family?: string | null;
+  parameterSize?: string | null;
+  quantization?: string | null;
+  license?: string | null; // first lines only
+};
+
+export type InstalledModel = {
+  name: string;
+  bytes: number; // on disk
+  modifiedAt: string;
+  parameterSize: string | null;
+  quantization: string | null;
+};
+
+export type LoadedModel = {
+  name: string;
+  bytes: number; // in memory
+  gpuBytes: number;
+  expiresAt: string | null; // when Ollama unloads it if unused
+  contextLength: number | null;
+};

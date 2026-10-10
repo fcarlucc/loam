@@ -28,3 +28,15 @@ export function parseSettings(input: unknown): ChatSettings | null {
 
 export const hasCustomSettings = (s: ChatSettings) =>
   s.system !== undefined || s.temperature !== undefined || s.contextLength !== undefined;
+
+// How long Ollama keeps a model in memory after a reply, in seconds (-1 = until Ollama stops).
+export const KEEP_ALIVE_DEFAULT = 300; // Ollama's own default
+export const KEEP_ALIVE_CHOICES = [
+  { seconds: 0, label: "Unload right after each reply" },
+  { seconds: 60, label: "1 minute" },
+  { seconds: 300, label: "5 minutes (Ollama default)" },
+  { seconds: 1800, label: "30 minutes" },
+  { seconds: 3600, label: "1 hour" },
+  { seconds: -1, label: "Until Ollama stops" },
+];
+export const isKeepAlive = (v: unknown): v is number => KEEP_ALIVE_CHOICES.some((c) => c.seconds === v);

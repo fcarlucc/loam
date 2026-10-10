@@ -1,10 +1,10 @@
 import { isValidModelName } from "@/lib/catalog";
-import { addMessage, createChat, DEFAULT_TITLE, getChat, getLeafId, getMessage, getPath, transaction, updateChat } from "@/lib/db";
+import { addMessage, createChat, DEFAULT_TITLE, getChat, getKeepAlive, getLeafId, getMessage, getPath, transaction, updateChat } from "@/lib/db";
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
 import { readNdjson } from "@/lib/ndjson";
 import { loadedContextLength, OLLAMA_URL, ollamaError } from "@/lib/ollama";
-import { parseSettings } from "@/lib/settings";
+import { KEEP_ALIVE_DEFAULT, parseSettings } from "@/lib/settings";
 import type { ChatEvent, ReplyStats } from "@/lib/types";
 
 type ChatChunk = {
@@ -99,6 +99,7 @@ export async function POST(request: Request) {
     ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
     ...(settings.contextLength !== undefined ? { num_ctx: settings.contextLength } : {}),
   };
+  const keepAlive = getKeepAlive();
   const messages = settings.system ? [{ role: "system", content: settings.system }, ...history] : history;
 
   const upstream = new AbortController();
@@ -110,7 +111,13 @@ export async function POST(request: Request) {
     res = await fetch(`${OLLAMA_URL}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages, stream: true, ...(Object.keys(options).length ? { options } : {}) }),
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: true,
+        ...(Object.keys(options).length ? { options } : {}),
+        ...(keepAlive !== KEEP_ALIVE_DEFAULT ? { keep_alive: keepAlive } : {}),
+      }),
       signal: upstream.signal,
     });
   } catch {

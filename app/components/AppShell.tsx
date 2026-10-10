@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChatSettings, ChatSummary, ModelInfo } from "@/lib/types";
 import { Chat } from "./Chat";
+import { ModelsDialog } from "./ModelsDialog";
 import { useOllamaStatus } from "./OllamaStatus";
 import { Sidebar } from "./Sidebar";
 
@@ -22,6 +23,7 @@ export function AppShell() {
   const running = ollama.status?.running ?? false;
 
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
   // Lives here, not in Chat, so the settings sidebar stays open when another chat is opened.
   // Only Chat (rendered after hydration) reads it, so reading storage during the first render is safe.
   const [settingsOpen, setSettingsOpen] = useState(() => {
@@ -170,6 +172,10 @@ export function AppShell() {
       onSelect={open}
       onDelete={remove}
       onRename={rename}
+      onOpenModels={() => {
+        setMobileOpen(false);
+        setModelsOpen(true);
+      }}
     />
   );
 
@@ -209,6 +215,10 @@ export function AppShell() {
           />
         )}
       </main>
+
+      {modelsOpen && (
+        <ModelsDialog ollamaRunning={running} onClose={() => setModelsOpen(false)} onModelsChanged={() => void refreshModels()} />
+      )}
     </div>
   );
 }

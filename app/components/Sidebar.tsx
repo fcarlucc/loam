@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ChatSummary } from "@/lib/types";
-import { ChatIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
+import { ChatIcon, CubeIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
 import { OllamaStatus, type useOllamaStatus } from "./OllamaStatus";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -143,6 +143,7 @@ export function Sidebar({
   onSelect,
   onDelete,
   onRename,
+  onOpenModels,
 }: {
   ollama: ReturnType<typeof useOllamaStatus>;
   chats: ChatSummary[];
@@ -151,6 +152,7 @@ export function Sidebar({
   onSelect: (id: number) => void;
   onDelete: (id: number) => void;
   onRename: (id: number, title: string) => void;
+  onOpenModels: () => void;
 }) {
   return (
     <div className="flex h-full w-72 flex-col gap-3 border-r border-border bg-panel p-3">
@@ -196,6 +198,13 @@ export function Sidebar({
         )}
       </nav>
 
+      <button
+        onClick={onOpenModels}
+        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+      >
+        <CubeIcon width={16} height={16} />
+        Models & memory
+      </button>
       <OllamaStatus state={ollama} />
       <ThemeToggle />
     </div>
