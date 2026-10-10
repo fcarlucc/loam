@@ -1,11 +1,13 @@
 "use client";
 
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
-import { CATALOG } from "@/lib/catalog";
+import { CATALOG, fitFor } from "@/lib/catalog";
 import { CheckIcon, ChevronUpIcon, CubeIcon, DownloadIcon, PlusIcon } from "./icons";
+import { FitBadge } from "./FitBadge";
 import { InstallDialog } from "./InstallDialog";
+import { memoryGb, useSystemInfo } from "./useSystemInfo";
 
-type Installing = { name?: string; size?: string };
+type Installing = { name?: string; sizeGb?: number };
 
 export function ModelPicker({
   models,
@@ -60,7 +62,13 @@ export function ModelPicker({
     items[(next + items.length) % items.length]?.focus();
   }
 
-  const downloadable = CATALOG.filter((c) => !models.includes(c.name));
+  const system = useSystemInfo();
+  const ram = system ? memoryGb(system) : null;
+  // Models that fit this Mac first; ones too big for it last.
+  const order = { good: 0, tight: 1, "too-big": 2 };
+  const downloadable = CATALOG.filter((c) => !models.includes(c.name))
+    .map((c) => ({ ...c, fit: ram === null ? null : fitFor(c.sizeGb, ram) }))
+    .sort((a, b) => (a.fit && b.fit ? order[a.fit] - order[b.fit] : 0));
   const startInstall = (target: Installing) => {
     setOpen(false);
     setInstalling(target);
@@ -124,19 +132,26 @@ export function ModelPicker({
           {ollamaRunning && downloadable.length > 0 && (
             <>
               <p className={`${headingClass} mt-1 border-t border-border pt-2.5`}>Available to download</p>
+              {system && (
+                <p className="px-2.5 pb-1 text-xs text-muted">
+                  For this Mac: {system.chip ? `${system.chip}, ` : ""}
+                  {ram} GB of memory
+                </p>
+              )}
               {downloadable.map((c) => (
                 <button
                   key={c.name}
-                  onClick={() => startInstall({ name: c.name, size: c.size })}
-                  aria-label={`Download ${c.label}, about ${c.size}`}
+                  onClick={() => startInstall({ name: c.name, sizeGb: c.sizeGb })}
+                  aria-label={`Download ${c.label}, about ${c.sizeGb} GB${c.fit ? `, ${c.fit === "good" ? "runs well" : c.fit === "tight" ? "tight fit" : "too big"} on this Mac` : ""}`}
                   className={itemClass}
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] text-muted">{c.label}</span>
                     <span className="block truncate text-xs text-muted/70">
-                      {c.note} · ~{c.size}
+                      {c.note} · ~{c.sizeGb} GB
                     </span>
                   </span>
+                  {c.fit && <FitBadge fit={c.fit} />}
                   <DownloadIcon width={15} height={15} className="shrink-0 text-muted" />
                 </button>
               ))}
@@ -155,7 +170,7 @@ export function ModelPicker({
       {installing && (
         <InstallDialog
           initialName={installing.name}
-          size={installing.size}
+          sizeGb={installing.sizeGb}
           onClose={() => {
             setInstalling(null);
             triggerRef.current?.focus();

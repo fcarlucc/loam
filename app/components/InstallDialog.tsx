@@ -1,23 +1,25 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { isValidModelName, normalizeModelName } from "@/lib/catalog";
+import { FIT_DETAIL, fitFor, isValidModelName, normalizeModelName } from "@/lib/catalog";
 import { readNdjson } from "@/lib/ndjson";
+import { memoryGb, useSystemInfo } from "./useSystemInfo";
 
 type Step = "name" | "confirm" | "downloading" | "error";
 type PullChunk = { status?: string; digest?: string; total?: number; completed?: number; error?: string };
 
 export function InstallDialog({
   initialName,
-  size,
+  sizeGb,
   onClose,
   onInstalled,
 }: {
   initialName?: string;
-  size?: string;
+  sizeGb?: number;
   onClose: () => void;
   onInstalled: (name: string) => void;
 }) {
+  const system = useSystemInfo();
   const [name, setName] = useState(initialName ?? "");
   const [step, setStep] = useState<Step>(initialName ? "confirm" : "name");
   const [status, setStatus] = useState("Starting…");
@@ -131,9 +133,15 @@ export function InstallDialog({
               Download <span className="font-mono">{trimmed}</span>?
             </h2>
             <p className="mt-1 text-sm text-muted">
-              It isn&apos;t installed yet. {size ? `The download is about ${size}` : "The download can be several GB"} and is
+              It isn&apos;t installed yet. {sizeGb ? `The download is about ${sizeGb} GB` : "The download can be several GB"} and is
               stored on this Mac. It runs fully locally.
             </p>
+            {sizeGb && system && (
+              <p className={`mt-2 text-sm ${fitFor(sizeGb, memoryGb(system)) === "good" ? "text-muted" : "text-danger"}`}>
+                Your Mac has {memoryGb(system)} GB of memory and this model needs about {Math.round(sizeGb + 1.5)} GB while
+                running: {FIT_DETAIL[fitFor(sizeGb, memoryGb(system))]}
+              </p>
+            )}
           </div>
         )}
 

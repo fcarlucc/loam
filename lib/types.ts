@@ -70,3 +70,5 @@ export type SearchHit = {
   role: Role | null;
   snippet: string | null;
 };
+
+export type SystemInfo = { chip: string | null; memoryBytes: number };

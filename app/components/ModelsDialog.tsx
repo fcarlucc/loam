@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { modelBudgetGb } from "@/lib/catalog";
 import { formatBytes, formatTokens, formatUnload } from "@/lib/format";
 import { KEEP_ALIVE_CHOICES } from "@/lib/settings";
 import type { InstalledModel, LoadedModel, ModelInfo } from "@/lib/types";
 import { TrashIcon, XIcon } from "./icons";
+import { memoryGb, useSystemInfo } from "./useSystemInfo";
 
 const buttonClass =
   "rounded-lg border border-border px-2.5 py-1 text-xs transition-colors hover:border-accent disabled:opacity-40";
@@ -28,6 +30,7 @@ export function ModelsDialog({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const system = useSystemInfo();
 
   const refresh = useCallback(async () => {
     try {
@@ -161,6 +164,12 @@ export function ModelsDialog({
               In memory
               {loaded.length > 0 && <span className="normal-case tracking-normal">{formatBytes(memoryUsed)} in use</span>}
             </h3>
+            {system && (
+              <p className="text-xs text-muted">
+                This Mac: {system.chip ? `${system.chip}, ` : ""}
+                {memoryGb(system)} GB of memory, of which about {Math.round(modelBudgetGb(memoryGb(system)))} GB can hold models.
+              </p>
+            )}
             {loaded.length === 0 ? (
               <p className="text-sm text-muted">No model is loaded. Ollama loads one when you send a message.</p>
             ) : (

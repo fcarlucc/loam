@@ -7,7 +7,7 @@ A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats
 - Per-chat settings in a right sidebar: system prompt, temperature, context length, plus defaults for new chats
 - Stats under every reply (speed, tokens, how full the context is), with a warning before old messages get dropped
 - Chat history in the sidebar (rename, delete), grouped by date, with full-text search across every message
-- Model picker next to the composer, with one-click download of popular models
+- Model picker next to the composer, with one-click download of popular models, labelled by how well they fit this Mac's memory
 - Compare two models side by side on the same prompt (answers, speed, load time; not saved)
 - Models & memory panel: what's loaded in RAM, free it, how long models stay loaded, model details, delete models
 - Start/stop Ollama from the sidebar; light, dark and system themes
@@ -63,6 +63,7 @@ app/api/chats          list, rename, delete chats, per-chat settings, switch ver
 app/api/search         full-text search (SQLite FTS5)
 app/api/compare        one model's answer for the comparison view (nothing saved)
 app/api/settings       defaults for new chats, keep-alive
+app/api/system         this Mac's chip and memory (model recommendations)
 app/api/ollama         status, start/stop, models (list, delete), model info, memory (ps, unload), downloads
 app/components         UI (AppShell, Chat, Sidebar, ModelPicker, …)
 lib/db.ts              SQLite schema, migrations and queries (messages form a tree of versions)
