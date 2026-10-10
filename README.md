@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ollama Wrap
 
-## Getting Started
+A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats are saved in SQLite and stay in the sidebar between launches.
 
-First, run the development server:
+- Streaming replies with Markdown and syntax-highlighted code, stop / regenerate / retry
+- Edit a sent message or regenerate a reply: every version is kept, switch between them with ◀ 2/3 ▶
+- Per-chat settings in a right sidebar: system prompt, temperature, context length, plus defaults for new chats
+- Stats under every reply (speed, tokens, how full the context is), with a warning before old messages get dropped
+- Chat history in the sidebar (rename, delete), grouped by date
+- Model picker next to the composer, with one-click download of popular models
+- Start/stop Ollama from the sidebar; light, dark and system themes
+
+## Requirements
+
+- macOS with Ollama installed through Homebrew: `brew install ollama`
+- Node.js `^22.13.0 || >=23.4.0` (the built-in `node:sqlite` module is used, no native dependencies)
+
+## Getting started
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm run dev` starts Ollama (`brew services restart ollama`), then the app, and prints the address to open:
+<http://localhost:3000>, or the next free port if another app already uses it.
+When the app exits (Ctrl+C, closing the terminal, a crash) it runs `brew services stop ollama`, so the model never keeps running in the background.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | Ollama + app, Ollama stopped on exit |
+| `npm run dev:raw` | App only, Ollama untouched |
+| `npm run build` / `npm start` | Production build on <http://127.0.0.1:3000>; Ollama is managed from the sidebar |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Pass `-p <port>` (e.g. `npm run dev -- -p 4000`) to choose the port yourself.
 
-## Learn More
+## Data
 
-To learn more about Next.js, take a look at the following resources:
+Chats and settings live in `data/` (ignored by git). To back them up, copy the whole folder while the app is stopped:
+SQLite keeps recent changes in `ollama-wrap.db-wal` next to the database, so the `.db` file alone may be incomplete.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Privacy and security
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Everything stays on this machine:
 
-## Deploy on Vercel
+- The server listens on `127.0.0.1` only, so other devices on the network can't reach it.
+- The API (`proxy.ts`) rejects requests whose `Host` isn't local (DNS rebinding) and changes that don't come from the app's own page (CSRF).
+- Images in model replies are shown as links and never loaded automatically, so a reply can't send data to a remote server.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Configuration
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Variable | Default | |
+| --- | --- | --- |
+| `OLLAMA_HOST_URL` | `http://localhost:11434` | Where the Ollama API is |
+
+## Project layout
+
+```
+app/api/chat           send, edit, regenerate or retry, streamed reply (and /stop)
+app/api/chats          list, rename, delete chats, per-chat settings, switch versions
+app/api/settings       defaults for new chats
+app/api/ollama         status, start/stop, models, model info, downloads
+app/components         UI (AppShell, Chat, Sidebar, ModelPicker, …)
+lib/db.ts              SQLite schema, migrations and queries (messages form a tree of versions)
+proxy.ts               request guard for /api
+scripts/dev.mjs        starts and stops Ollama around `next dev`
+```
