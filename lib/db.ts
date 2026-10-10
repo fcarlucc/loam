@@ -29,6 +29,7 @@ function migrate(conn: DatabaseSync) {
   conn.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
+    PRAGMA secure_delete = ON; -- deleted rows are overwritten in the file, not just marked as free space
     CREATE TABLE IF NOT EXISTS chats (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       title      TEXT    NOT NULL,
@@ -188,8 +189,13 @@ export function updateChat(id: number, fields: { title?: string; model?: string;
   }
 }
 
+// Deletes a chat and its messages for good: besides secure_delete, the search index is compacted (it can
+// keep words of deleted messages in old segments) and the WAL is checkpointed and truncated (it keeps
+// earlier copies of changed pages).
 export function deleteChat(id: number) {
   db().prepare("DELETE FROM chats WHERE id = ?").run(id);
+  db().exec("INSERT INTO messages_fts (messages_fts) VALUES ('optimize')");
+  db().exec("PRAGMA wal_checkpoint(TRUNCATE)");
 }
 
 function messageRows(chatId: number) {
