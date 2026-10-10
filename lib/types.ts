@@ -72,3 +72,28 @@ export type SearchHit = {
 };
 
 export type SystemInfo = { chip: string | null; memoryBytes: number };
+
+export type Usage = {
+  totals: { chats: number; sent: number; replies: number; tokens: number; generatingMs: number };
+  daily: { day: string; replies: number; tokens: number }[]; // only days with replies, "YYYY-MM-DD"
+  models: {
+    model: string;
+    replies: number;
+    tokens: number;
+    avgTokensPerSecond: number | null;
+    coldStarts: number;
+    avgColdLoadMs: number | null;
+  }[];
+};
+
+export type BenchmarkResult = {
+  id: number;
+  model: string;
+  createdAt: number;
+  cold: boolean; // model unloaded first, so loadMs is a real cold start
+  tokens: number;
+  tokensPerSecond: number; // generation speed
+  promptPerSecond: number; // reading speed
+  loadMs: number;
+  totalMs: number;
+};

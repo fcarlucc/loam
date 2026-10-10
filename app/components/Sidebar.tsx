@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ChatSummary } from "@/lib/types";
-import { ChatIcon, ColumnsIcon, CubeIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
+import { ChartIcon, ChatIcon, ColumnsIcon, CubeIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
 import { OllamaStatus, type useOllamaStatus } from "./OllamaStatus";
 import { ThemeToggle } from "./ThemeToggle";
 import { SearchBox, SearchResults, useChatSearch } from "./ChatSearch";
@@ -147,6 +147,7 @@ export function Sidebar({
   onOpenModels,
   onOpenResult,
   onOpenCompare,
+  onOpenDashboard,
 }: {
   ollama: ReturnType<typeof useOllamaStatus>;
   chats: ChatSummary[];
@@ -158,6 +159,7 @@ export function Sidebar({
   onOpenModels: () => void;
   onOpenResult: (chatId: number, messageId: number | null) => void;
   onOpenCompare: () => void;
+  onOpenDashboard: () => void;
 }) {
   const search = useChatSearch();
   return (
@@ -214,6 +216,13 @@ export function Sidebar({
       >
         <ColumnsIcon width={16} height={16} />
         Compare models
+      </button>
+      <button
+        onClick={onOpenDashboard}
+        className="-mb-2 flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+      >
+        <ChartIcon width={16} height={16} />
+        Usage & benchmark
       </button>
       <button
         onClick={onOpenModels}

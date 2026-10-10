@@ -10,6 +10,7 @@ A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats
 - Model picker next to the composer, with one-click download of popular models, labelled by how well they fit this Mac's memory
 - Compare two models side by side on the same prompt (answers, speed, load time; not saved)
 - Models & memory panel: what's loaded in RAM, free it, how long models stay loaded, model details, delete models
+- Usage dashboard (activity, tokens, speed per model) and a repeatable speed benchmark
 - Start/stop Ollama from the sidebar; light, dark and system themes
 
 ## Requirements
@@ -64,6 +65,8 @@ app/api/search         full-text search (SQLite FTS5)
 app/api/compare        one model's answer for the comparison view (nothing saved)
 app/api/settings       defaults for new chats, keep-alive
 app/api/system         this Mac's chip and memory (model recommendations)
+app/api/usage          usage totals, replies per day, per model
+app/api/benchmark      run / list / clear benchmark results
 app/api/ollama         status, start/stop, models (list, delete), model info, memory (ps, unload), downloads
 app/components         UI (AppShell, Chat, Sidebar, ModelPicker, …)
 lib/db.ts              SQLite schema, migrations and queries (messages form a tree of versions)

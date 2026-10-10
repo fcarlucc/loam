@@ -24,6 +24,7 @@
   --danger: #e8780c;
   --gloss-edge: rgb(255 255 255 / 1);
   --code-bg: #f3f1ec;
+  --viz-1: #2a78d6; /* chart series, validated against the light surface */
   --hl-comment: #8a867c;
   --hl-keyword: #c2255c;
   --hl-string: #2b8a3e;
@@ -57,6 +58,7 @@
   --danger: #ffa23a;
   --gloss-edge: rgb(255 255 255 / 0.14);
   --code-bg: #0a0a0c;
+  --viz-1: #3987e5; /* chart series, validated against the dark surface */
   --hl-comment: #7c7d86;
   --hl-keyword: #ff7a93;
   --hl-string: #8ce99a;
@@ -80,6 +82,7 @@
   --color-accent-soft: var(--accent-soft);
   --color-ok: var(--ok);
   --color-danger: var(--danger);
+  --color-viz-1: var(--viz-1);
   --shadow-card: var(--shadow);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);

@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isKeepAlive, KEEP_ALIVE_DEFAULT, parseSettings } from "./settings";
-import type { ChatMessage, ChatSettings, ChatSummary, ReplyStats, Role, SearchHit } from "./types";
+import type { BenchmarkResult, ChatMessage, ChatSettings, ChatSummary, ReplyStats, Role, SearchHit, Usage } from "./types";
 
 // Title of chats created by earlier versions before their first message.
 export const DEFAULT_TITLE = "New chat";
@@ -51,6 +51,33 @@ function migrate(conn: DatabaseSync) {
   `);
   addColumn(conn, "chats", "settings", "TEXT"); // JSON ChatSettings
   addColumn(conn, "messages", "stats", "TEXT"); // JSON ReplyStats
+
+  // Which model wrote each reply, for usage per model. Replies saved before this existed get the
+  // chat's current model, the best guess available.
+  if (!hasColumn(conn, "messages", "model")) {
+    conn.exec("BEGIN");
+    try {
+      conn.exec("ALTER TABLE messages ADD COLUMN model TEXT");
+      conn.exec(`UPDATE messages SET model = (SELECT model FROM chats WHERE chats.id = messages.chat_id) WHERE role = 'assistant'`);
+      conn.exec("COMMIT");
+    } catch (e) {
+      conn.exec("ROLLBACK");
+      throw e;
+    }
+  }
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS benchmarks (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      model             TEXT    NOT NULL,
+      created_at        INTEGER NOT NULL,
+      cold              INTEGER NOT NULL, -- 1 if the model was unloaded first, so load time is included
+      tokens            INTEGER NOT NULL,
+      tokens_per_second REAL    NOT NULL,
+      prompt_per_second REAL    NOT NULL,
+      load_ms           INTEGER NOT NULL,
+      total_ms          INTEGER NOT NULL
+    );
+  `);
 
   // A conversation is a tree: each message points to the one it follows, so an edited message or a
   // regenerated reply is a sibling (a "version"). chats.leaf_id is the last message of the branch on screen.
@@ -209,11 +236,17 @@ export function getPath(chatId: number, leafId: number | null = getLeafId(chatId
 }
 
 // Adds a message after `parentId` and makes it the end of the branch on screen. Returns its id.
-export function addMessage(chatId: number, role: Role, content: string, parentId: number | null, stats?: ReplyStats) {
+export function addMessage(
+  chatId: number,
+  role: Role,
+  content: string,
+  parentId: number | null,
+  reply?: { model: string; stats?: ReplyStats },
+) {
   const now = Date.now();
   const { lastInsertRowid } = db()
-    .prepare("INSERT INTO messages (chat_id, parent_id, role, content, stats, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(chatId, parentId, role, content, stats ? JSON.stringify(stats) : null, now);
+    .prepare("INSERT INTO messages (chat_id, parent_id, role, content, model, stats, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(chatId, parentId, role, content, reply?.model ?? null, reply?.stats ? JSON.stringify(reply.stats) : null, now);
   const id = Number(lastInsertRowid);
   db().prepare("UPDATE chats SET updated_at = ?, leaf_id = ? WHERE id = ?").run(now, id, chatId);
   return id;
@@ -283,3 +316,63 @@ export const getKeepAlive = (): number => {
   return isKeepAlive(value) ? value : KEEP_ALIVE_DEFAULT;
 };
 export const setKeepAlive = (seconds: number) => setAppSetting("keep_alive", seconds);
+
+// Usage overview: totals, replies per day (last 30 days, local time) and per model.
+export function getUsage(): Usage {
+  const since = Date.now() - 30 * 24 * 3600 * 1000;
+  const totals = db()
+    .prepare(
+      `SELECT (SELECT count(*) FROM chats) AS chats,
+              count(*) FILTER (WHERE role = 'user') AS sent,
+              count(*) FILTER (WHERE role = 'assistant') AS replies,
+              coalesce(sum(json_extract(stats, '$.tokens')), 0) AS tokens,
+              coalesce(sum(json_extract(stats, '$.totalMs')), 0) AS generatingMs
+         FROM messages`,
+    )
+    .get() as Usage["totals"];
+  const daily = db()
+    .prepare(
+      `SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS day, count(*) AS replies,
+              coalesce(sum(json_extract(stats, '$.tokens')), 0) AS tokens
+         FROM messages WHERE role = 'assistant' AND created_at >= ?
+        GROUP BY day ORDER BY day`,
+    )
+    .all(since) as Usage["daily"];
+  // A reply that spent over a second loading the model counts as a cold start.
+  const models = db()
+    .prepare(
+      `SELECT model, count(*) AS replies,
+              coalesce(sum(json_extract(stats, '$.tokens')), 0) AS tokens,
+              avg(json_extract(stats, '$.tokensPerSecond')) AS avgTokensPerSecond,
+              count(*) FILTER (WHERE json_extract(stats, '$.loadMs') > 1000) AS coldStarts,
+              avg(json_extract(stats, '$.loadMs')) FILTER (WHERE json_extract(stats, '$.loadMs') > 1000) AS avgColdLoadMs
+         FROM messages WHERE role = 'assistant' AND model IS NOT NULL
+        GROUP BY model ORDER BY replies DESC`,
+    )
+    .all() as Usage["models"];
+  return { totals, daily, models };
+}
+
+export function addBenchmark(r: Omit<BenchmarkResult, "id" | "createdAt">) {
+  db()
+    .prepare(
+      `INSERT INTO benchmarks (model, created_at, cold, tokens, tokens_per_second, prompt_per_second, load_ms, total_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(r.model, Date.now(), r.cold ? 1 : 0, r.tokens, r.tokensPerSecond, r.promptPerSecond, r.loadMs, r.totalMs);
+}
+
+export function listBenchmarks(limit = 50): BenchmarkResult[] {
+  const rows = db()
+    .prepare(
+      `SELECT id, model, created_at AS createdAt, cold, tokens, tokens_per_second AS tokensPerSecond,
+              prompt_per_second AS promptPerSecond, load_ms AS loadMs, total_ms AS totalMs
+         FROM benchmarks ORDER BY id DESC LIMIT ?`,
+    )
+    .all(limit) as (Omit<BenchmarkResult, "cold"> & { cold: number })[];
+  return rows.map((r) => ({ ...r, cold: r.cold === 1 }));
+}
+
+export function clearBenchmarks() {
+  db().exec("DELETE FROM benchmarks");
+}

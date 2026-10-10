@@ -127,7 +127,7 @@ export async function POST(request: Request) {
     saved = true;
     if (!reply) return; // nothing generated: a regenerated reply keeps its previous version on screen
     try {
-      addMessage(id, "assistant", reply, answering, stats); // also keeps partial replies (without stats)
+      addMessage(id, "assistant", reply, answering, { model, stats }); // also keeps partial replies (without stats)
     } catch {
       // The chat was deleted while the reply was streaming: nothing to keep.
     }

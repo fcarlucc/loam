@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ChatSettings, ChatSummary, ModelInfo } from "@/lib/types";
 import { Chat } from "./Chat";
 import { CompareView } from "./CompareView";
+import { DashboardView } from "./DashboardView";
 import { ModelsDialog } from "./ModelsDialog";
 import { useOllamaStatus } from "./OllamaStatus";
 import { Sidebar } from "./Sidebar";
@@ -25,7 +26,8 @@ export function AppShell() {
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
-  const [comparing, setComparing] = useState(false);
+  // What the main area shows besides a chat.
+  const [screen, setScreen] = useState<"chat" | "compare" | "dashboard">("chat");
   // Lives here, not in Chat, so the settings sidebar stays open when another chat is opened.
   // Only Chat (rendered after hydration) reads it, so reading storage during the first render is safe.
   const [settingsOpen, setSettingsOpen] = useState(() => {
@@ -139,7 +141,7 @@ export function AppShell() {
 
   const open = (id: number | null) => {
     setMobileOpen(false);
-    setComparing(false);
+    setScreen("chat");
     if (id !== null && id === view.id) return; // already open: don't interrupt a streaming reply
     setView((v) => ({ key: v.key + 1, id }));
     // Continue a saved chat with the model it was using, if that model is still installed.
@@ -157,7 +159,7 @@ export function AppShell() {
       }).catch(() => {});
     }
     setMobileOpen(false);
-    setComparing(false);
+    setScreen("chat");
     setView((v) => ({ key: v.key + 1, id, focus: messageId }));
     const chatModel = chats.find((c) => c.id === id)?.model;
     if (chatModel && models.includes(chatModel)) setModel(chatModel);
@@ -195,7 +197,11 @@ export function AppShell() {
       onOpenResult={(id, messageId) => void openResult(id, messageId)}
       onOpenCompare={() => {
         setMobileOpen(false);
-        setComparing(true);
+        setScreen("compare");
+      }}
+      onOpenDashboard={() => {
+        setMobileOpen(false);
+        setScreen("dashboard");
       }}
       onOpenModels={() => {
         setMobileOpen(false);
@@ -217,12 +223,19 @@ export function AppShell() {
       )}
 
       <main className="flex min-w-0 flex-1">
-        {comparing ? (
+        {screen === "dashboard" ? (
+          <DashboardView
+            models={models}
+            ollamaRunning={running}
+            onClose={() => setScreen("chat")}
+            onOpenSidebar={() => setMobileOpen(true)}
+          />
+        ) : screen === "compare" ? (
           <CompareView
             models={models}
             defaultModel={model}
             ollamaRunning={running}
-            onClose={() => setComparing(false)}
+            onClose={() => setScreen("chat")}
             onOpenSidebar={() => setMobileOpen(true)}
           />
         ) : (
