@@ -166,7 +166,7 @@ export function Sidebar({
     <div className="flex h-full w-72 flex-col gap-3 border-r border-border bg-panel p-3">
       <div className="flex items-center gap-2 px-1 pt-1">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/icon.svg" alt="" width={32} height={32} className="h-8 w-8 rounded-lg shadow-card" />
+        <img src="/icon.png" alt="" width={32} height={32} className="h-8 w-8" />
         <span className="text-[15px] font-semibold tracking-tight">Ollama Wrap</span>
       </div>
 
