@@ -2,6 +2,7 @@
 
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
+import { notify, snippet, userIsAway } from "@/lib/notify";
 import { hasCustomSettings } from "@/lib/settings";
 import type { ChatEvent, ChatMessage, ChatSettings as Settings, ModelInfo, Versions } from "@/lib/types";
 import { CopyButton } from "./CopyButton";
@@ -109,6 +110,11 @@ export function Chat({
   const systemPromptRef = useRef<HTMLTextAreaElement>(null);
   // Focus moves into the settings only when the user opens them, never when a chat mounts with them open.
   const focusSettingsOnOpen = useRef(false);
+  // The current title, for the notification sent when a reply finishes: a new chat gets its title mid-reply.
+  const titleRef = useRef(title);
+  useEffect(() => {
+    titleRef.current = title;
+  }, [title]);
 
   useEffect(() => {
     if (openedId === null) return;
@@ -270,6 +276,8 @@ export function Chat({
     const active = { controller, chatId: null as number | null };
     activeRef.current = active;
     let accepted = false;
+    let text = ""; // the reply so far
+    let failure: string | null = null;
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -300,6 +308,7 @@ export function Chat({
         if (controller.signal.aborted) break;
         if (event.type === "error") throw new StreamError(event.message);
         if (event.type === "done") finished = true;
+        if (event.type === "delta") text += event.text;
         setMessages((m) => {
           const tail = m[m.length - 1];
           const next =
@@ -309,8 +318,15 @@ export function Chat({
       }
       if (!finished && !controller.signal.aborted) throw new TypeError("stream ended early");
     } catch (e) {
-      if (!controller.signal.aborted) setError(describeError(e, accepted));
+      if (!controller.signal.aborted) {
+        failure = describeError(e, accepted);
+        setError(failure);
+      }
     } finally {
+      // The reply ended while the user was in another app or tab: tell them, if they asked for it.
+      if (accepted && !controller.signal.aborted && userIsAway()) {
+        notify(failure ? { title: "Reply failed", body: failure } : { title: titleRef.current || "Reply ready", body: snippet(text) });
+      }
       if (!accepted) {
         // Nothing was saved: restore the conversation and give the text back.
         setMessages(before);

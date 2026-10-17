@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
+import { notify, snippet, userIsAway } from "@/lib/notify";
 import type { ChatEvent, ReplyStats } from "@/lib/types";
 import { TypingDots } from "./Chat";
 import { MenuIcon, SendIcon, StopIcon, XIcon } from "./icons";
@@ -88,6 +89,10 @@ export function CompareView({
             : { ...a, status: "error", error: e instanceof Error ? e.message : "Something went wrong" },
         );
       }
+    }
+    // Both answers are in while the user was in another app or tab: tell them, if they asked for it.
+    if (!controller.signal.aborted && userIsAway()) {
+      notify({ title: "Comparison ready", body: `${modelA} vs ${modelB} · ${snippet(content, 80)}` });
     }
   }
 

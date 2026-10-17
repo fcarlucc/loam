@@ -85,3 +85,9 @@ export const ColumnsIcon = (p: SVGProps<SVGSVGElement>) => (
 export const ChartIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M4 20h16M7 16v-4M12 16V8M17 16v-7" /></svg>
 );
+export const BellIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z" /><path d="M10 20a2 2 0 0 0 4 0" /></svg>
+);
+export const BellOffIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M8.6 5.6A6 6 0 0 1 18 11v5l1.5 2H9.5M6 11v5l-1.5 2h2.5" /><path d="M10 20a2 2 0 0 0 4 0" /><path d="M4 4l16 16" /></svg>
+);

@@ -12,6 +12,7 @@ A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats
 - Models & memory panel: what's loaded in RAM, free it, how long models stay loaded, model details, delete models
 - Usage dashboard (activity, tokens, speed per model) and a repeatable speed benchmark
 - Start/stop Ollama from the sidebar; light, dark and system themes
+- Optional desktop notification when a reply finishes while you are in another app or tab (bell in the sidebar)
 
 ## Requirements
 
@@ -52,6 +53,8 @@ Everything stays on this machine:
 - Images in model replies are shown as links and never loaded automatically, so a reply can't send data to a remote server.
 - Next.js telemetry is switched off by the scripts, and the page loads nothing from the internet. The only outbound
   connections are the ones you ask for (downloading a model) and Next.js fetching the Geist font files once when it compiles.
+- Reply notifications are off by default. When on, your browser shows them through macOS, so the start of a reply
+  appears in Notification Center like any other notification. Nothing is sent anywhere.
 
 All of this is checked by the tests below. Two things are outside the app's control:
 

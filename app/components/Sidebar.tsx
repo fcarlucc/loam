@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import type { ChatSummary } from "@/lib/types";
 import { ChartIcon, ChatIcon, ColumnsIcon, CubeIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
 import { OllamaStatus, type useOllamaStatus } from "./OllamaStatus";
+import { NotifyToggle } from "./NotifyToggle";
 import { ThemeToggle } from "./ThemeToggle";
 import { SearchBox, SearchResults, useChatSearch } from "./ChatSearch";
 
@@ -232,7 +233,12 @@ export function Sidebar({
         Models & memory
       </button>
       <OllamaStatus state={ollama} />
-      <ThemeToggle />
+      <div className="flex items-stretch gap-2">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <ThemeToggle />
+        </div>
+        <NotifyToggle />
+      </div>
     </div>
   );
 }
