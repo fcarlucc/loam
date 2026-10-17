@@ -13,7 +13,8 @@ let migrated = false;
 
 function db() {
   if (!g.__db) {
-    const dir = join(process.cwd(), "data");
+    // OLLAMA_WRAP_DATA_DIR lets the end-to-end tests use a throwaway database instead of your chats.
+    const dir = process.env.OLLAMA_WRAP_DATA_DIR || join(process.cwd(), "data");
     mkdirSync(dir, { recursive: true });
     g.__db = new DatabaseSync(join(dir, "ollama-wrap.db"));
   }

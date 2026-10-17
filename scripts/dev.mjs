@@ -73,18 +73,39 @@ if (manageOllama) {
   }
 }
 
+// The port passed with -p / --port, if any.
+function portFromArgs() {
+  const i = args.findIndex((a) => a === "-p" || a === "--port");
+  if (i >= 0) return Number(args[i + 1]);
+  const inline = args.find((a) => a.startsWith("--port="));
+  return inline ? Number(inline.slice("--port=".length)) : undefined;
+}
+
 // Bind to localhost unless a hostname was passed explicitly: chats must not be reachable from the network.
 const hasHost = args.some((a) => a === "-H" || a === "--hostname" || a.startsWith("--hostname="));
-const hasPort = args.some((a) => a === "-p" || a === "--port" || a.startsWith("--port="));
 const extra = hasHost ? [] : ["-H", "127.0.0.1"];
-if (!hasPort) {
-  const port = await freePort(Number(process.env.PORT) || 3000);
+let port = portFromArgs();
+if (port === undefined) {
+  port = await freePort(Number(process.env.PORT) || 3000);
   extra.push("-p", String(port));
   log(`Open http://localhost:${port}`);
 }
 
+// Next's server processes still listening on our port. `next dev` runs the server in a child process of
+// its own: if the CLI is killed outright, that child lives on and keeps the port.
+function nextServersOnPort() {
+  const lsof = spawnSync("lsof", ["-nP", "-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  return (lsof.stdout ?? "")
+    .split("\n")
+    .map(Number)
+    .filter((pid) => pid > 0 && pid !== process.pid)
+    .filter((pid) => /next-server/.test(spawnSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).stdout ?? ""));
+}
+
 const nextBin = require.resolve("next/dist/bin/next");
-const child = spawn(process.execPath, [nextBin, "dev", ...extra, ...args], { stdio: "inherit" });
+// Next.js would otherwise send anonymous usage data to Vercel: everything stays on this machine.
+const env = { ...process.env, NEXT_TELEMETRY_DISABLED: process.env.NEXT_TELEMETRY_DISABLED ?? "1" };
+const child = spawn(process.execPath, [nextBin, "dev", ...extra, ...args], { stdio: "inherit", env });
 
 // The terminal sends SIGINT to Next too: wait for it to exit, then stop Ollama.
 // `next dev` only shuts down cleanly on SIGINT/SIGTERM (on SIGHUP it dies and leaves its server
@@ -100,7 +121,16 @@ function shutdown(signal) {
 }
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => shutdown(sig));
 
-child.on("exit", (code) => {
+child.on("exit", (code, signal) => {
+  // Killed by a signal (crash, kill -9, terminal gone) the CLI couldn't stop its server process: do it here.
+  // On any other exit it has already done so itself.
+  if (signal !== null) {
+    for (const pid of nextServersOnPort()) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+  }
   stopOllama();
   process.exit(code ?? 0);
 });

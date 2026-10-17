@@ -34,6 +34,7 @@ When the app exits (Ctrl+C, closing the terminal, a crash) it runs `brew service
 | `npm run dev` | Ollama + app, Ollama stopped on exit |
 | `npm run dev:raw` | App only, Ollama untouched |
 | `npm run build` / `npm start` | Production build on <http://127.0.0.1:3000>; Ollama is managed from the sidebar |
+| `npm run test:e2e` | End-to-end tests, see [Tests](#tests) |
 
 Pass `-p <port>` (e.g. `npm run dev -- -p 4000`) to choose the port yourself.
 
@@ -49,12 +50,37 @@ Everything stays on this machine:
 - The server listens on `127.0.0.1` only, so other devices on the network can't reach it.
 - The API (`proxy.ts`) rejects requests whose `Host` isn't local (DNS rebinding) and changes that don't come from the app's own page (CSRF).
 - Images in model replies are shown as links and never loaded automatically, so a reply can't send data to a remote server.
+- Next.js telemetry is switched off by the scripts, and the page loads nothing from the internet. The only outbound
+  connections are the ones you ask for (downloading a model) and Next.js fetching the Geist font files once when it compiles.
+
+All of this is checked by the tests below. Two things are outside the app's control:
+
+- Ollama's own API on port 11434 also listens on the loopback only, but Ollama lets any page served from `localhost`
+  call it directly (that is its default `OLLAMA_ORIGINS`). Another local web app could use your models; this app can't change that.
+- If the `node` process is killed with `kill -9`, nothing can run, so Ollama stays up until you run `brew services stop ollama`.
+
+## Tests
+
+```bash
+npm run test:e2e
+```
+
+`tests/e2e/api.test.mjs` starts the app exactly as `npm run dev` does (`scripts/dev.mjs`), with a throwaway database
+and its own build directory (`.next-e2e`), so it can run while the app is open and never touches your chats. It talks
+to a fake Ollama (`tests/e2e/helpers/fake-ollama.mjs`) that needs no model and no memory, and checks every API route:
+the loopback-only binding, the `Host` and `Origin` guards on every route (new ones included), streaming, stop and
+disconnect, message versions, deleting for good, search, settings, usage, benchmark, compare, the models panel.
+
+`tests/e2e/lifecycle.test.mjs` uses the real Homebrew Ollama service: it checks that `npm run dev` starts it and stops it
+on Ctrl+C, when the terminal is closed and when Next crashes, leaving no process behind, that the sidebar's power switch
+works and that a taken port is skipped. It restarts that service, so it skips itself when Ollama is already running.
 
 ## Configuration
 
 | Variable | Default | |
 | --- | --- | --- |
 | `OLLAMA_HOST_URL` | `http://localhost:11434` | Where the Ollama API is |
+| `OLLAMA_WRAP_DATA_DIR` | `data/` | Where chats and settings are stored |
 
 ## Project layout
 
@@ -72,4 +98,5 @@ app/components         UI (AppShell, Chat, Sidebar, ModelPicker, …)
 lib/db.ts              SQLite schema, migrations and queries (messages form a tree of versions)
 proxy.ts               request guard for /api
 scripts/dev.mjs        starts and stops Ollama around `next dev`
+tests/e2e              end-to-end tests: API against a fake Ollama, lifecycle against the real one
 ```
