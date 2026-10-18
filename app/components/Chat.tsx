@@ -1,20 +1,25 @@
 "use client";
 
 import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
+import { MAX_ATTACHMENTS } from "@/lib/attachments";
+import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
 import { hasCustomSettings } from "@/lib/settings";
-import type { ChatEvent, ChatMessage, ChatSettings as Settings, ModelInfo, Versions } from "@/lib/types";
+import type { ChatEvent, ChatMessage, ChatSettings as Settings, ModelInfo, NewAttachment, Versions } from "@/lib/types";
+import { acceptFor, AttachmentChips, metaOf, readFiles, textTokens } from "./Attachments";
 import { CopyButton } from "./CopyButton";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
   MenuIcon,
+  PaperclipIcon,
   PencilIcon,
   RefreshIcon,
   SendIcon,
   SlidersIcon,
   StopIcon,
+  XIcon,
 } from "./icons";
 import { Markdown } from "./Markdown";
 import { ModelPicker } from "./ModelPicker";
@@ -45,7 +50,7 @@ function describeError(e: unknown, accepted: boolean) {
 // What a run asks for: a new message, a new version of a sent message, a new version of a reply,
 // or a reply to a message that has none.
 type Action =
-  | { kind: "send"; content: string }
+  | { kind: "send"; content: string; attachments?: NewAttachment[] }
   | { kind: "edit"; id: number; content: string }
   | { kind: "regenerate"; id: number }
   | { kind: "retry" };
@@ -100,6 +105,11 @@ export function Chat({
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
   // A message opened from search: scrolled into view and highlighted for a moment.
   const [highlight, setHighlight] = useState<number | null>(focusMessageId);
+  // Files waiting in the composer, what was wrong with the last ones added, and whether files hover over the chat.
+  const [pending, setPending] = useState<NewAttachment[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // The reply being streamed: its request, and the chat id once the server has accepted it.
   const activeRef = useRef<{ controller: AbortController; chatId: number | null } | null>(null);
@@ -215,10 +225,30 @@ export function Chat({
 
   function sendDraft() {
     const content = draft.trim();
-    if (!ready || !content) return; // a draft that can't be sent yet stays in the box
+    if (!ready || (!content && !pending.length)) return; // a draft that can't be sent yet stays in the box
+    const attachments = pending;
     onDraftChange("");
-    void run({ kind: "send", content });
+    setPending([]);
+    setFileError(null);
+    void run({ kind: "send", content, ...(attachments.length ? { attachments } : {}) });
   }
+
+  // Images are refused up front for a model known not to see them; while the model's details aren't known
+  // (none picked yet, or still loading) they are taken, and the server refuses them when the message is sent.
+  const canSee = modelInfo ? modelInfo.capabilities.includes("vision") : undefined;
+
+  // Files picked, dropped or pasted join the composer; the ones that can't are named under it.
+  async function addFiles(files: File[]) {
+    if (!files.length) return;
+    const { accepted, refused } = await readFiles(files, { canSee, room: MAX_ATTACHMENTS - pending.length });
+    setPending((p) => [...p, ...accepted].slice(0, MAX_ATTACHMENTS));
+    setFileError(refused.length ? refused.join(" · ") : null);
+  }
+
+  // What the attached text would take from the context the next reply has.
+  const fileTokens = textTokens(pending);
+  const contextSize = effectiveSettings.contextLength ?? [...messages].reverse().find((m) => m.stats?.contextSize)?.stats?.contextSize ?? max;
+  const filesTooBig = !!contextSize && fileTokens > contextSize / 2;
 
   // The server holds the final branch (ids, versions, stats); returns false if it couldn't be loaded.
   async function loadBranch(id: number) {
@@ -277,9 +307,11 @@ export function Chat({
     setEditing(null);
     setStreaming(true);
     followRef.current.force = true;
+    // The files shown with the message while it is sent: the new ones, or those of the message being edited.
+    const files = action.kind === "send" ? action.attachments?.map(metaOf) : action.kind === "edit" ? before[cut].attachments : undefined;
     setMessages([
       ...before.slice(0, cut),
-      ...(content !== null ? [{ role: "user" as const, content }] : []),
+      ...(content !== null ? [{ role: "user" as const, content, ...(files?.length ? { attachments: files } : {}) }] : []),
       { role: "assistant", content: "" },
     ]);
 
@@ -299,7 +331,7 @@ export function Chat({
           model,
           settings: effectiveSettings,
           ...(action.kind === "send"
-            ? { content: action.content }
+            ? { content: action.content, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }
             : action.kind === "edit"
               ? { content: action.content, editOf: action.id }
               : action.kind === "regenerate"
@@ -343,9 +375,12 @@ export function Chat({
         notify(failure ? { title: "Reply failed", body: failure } : { title: titleRef.current || "Reply ready", body: snippet(text) });
       }
       if (!accepted) {
-        // Nothing was saved: restore the conversation and give the text back.
+        // Nothing was saved: restore the conversation and give the text and files back.
         setMessages(before);
-        if (action.kind === "send") onDraftChange((d) => d || action.content);
+        if (action.kind === "send") {
+          onDraftChange((d) => d || action.content);
+          if (action.attachments?.length) setPending((p) => (p.length ? p : action.attachments!));
+        }
         if (action.kind === "edit") setEditing({ id: action.id, text: action.content });
       } else if (controller.signal.aborted || active.chatId === null || !(await loadBranch(active.chatId))) {
         // Couldn't reload the saved branch: drop the empty bubble, or bring back the reply being regenerated.
@@ -373,7 +408,23 @@ export function Chat({
 
   return (
     <div className="flex h-full min-w-0 flex-1">
-      <div className="flex h-full min-w-0 flex-1 flex-col">
+      <div
+        className="flex h-full min-w-0 flex-1 flex-col"
+        // Files can be dropped anywhere on the chat; the composer shows where they land.
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          void addFiles([...e.dataTransfer.files]);
+        }}
+      >
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 md:px-5">
           <button
             onClick={onOpenSidebar}
@@ -442,13 +493,16 @@ export function Chat({
                   }
                   return (
                     <div key={key} data-message-id={m.id} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
-                      <div
-                        className={`whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg transition-shadow ${
-                          highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""
-                        }`}
-                      >
-                        {m.content}
-                      </div>
+                      {m.content && (
+                        <div
+                          className={`whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg transition-shadow ${
+                            highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""
+                          }`}
+                        >
+                          {m.content}
+                        </div>
+                      )}
+                      {m.attachments && <AttachmentChips items={m.attachments} className="justify-end" />}
                       {m.id !== undefined && !streaming && (
                         <div className="flex items-center gap-1">
                           <button
@@ -522,7 +576,14 @@ export function Chat({
         </div>
 
         <div className="shrink-0 px-4 pb-4 pt-2">
-          <div className="mx-auto flex max-w-3xl flex-col rounded-2xl border border-border surface-glossy p-2 focus-within:border-accent">
+          <div
+            className={`mx-auto flex max-w-3xl flex-col rounded-2xl border surface-glossy p-2 focus-within:border-accent ${
+              dragging ? "border-dashed border-accent" : "border-border"
+            }`}
+          >
+            {pending.length > 0 && (
+              <AttachmentChips items={pending} onRemove={(i) => setPending((p) => p.filter((_, j) => j !== i))} className="px-2 pt-2" />
+            )}
             <textarea
               ref={textareaRef}
               autoFocus
@@ -534,14 +595,59 @@ export function Chat({
                   sendDraft();
                 }
               }}
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files];
+                if (!files.length) return; // pasted text goes in as usual
+                e.preventDefault();
+                void addFiles(files);
+              }}
               rows={1}
-              placeholder={ollamaRunning ? "Write a message…" : "Start Ollama to write"}
+              placeholder={ollamaRunning ? (dragging ? "Drop the files here" : "Write a message…") : "Start Ollama to write"}
               disabled={!ollamaRunning}
               aria-label="Message"
               className="max-h-[200px] w-full resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
             />
+            {fileError && (
+              <p role="alert" className="flex items-start gap-1 px-2 pb-1 text-xs text-danger">
+                <span className="min-w-0 flex-1">{fileError}</span>
+                <button
+                  onClick={() => setFileError(null)}
+                  aria-label="Dismiss"
+                  title="Dismiss"
+                  className="shrink-0 rounded-md p-0.5 text-muted transition-colors hover:text-fg"
+                >
+                  <XIcon width={12} height={12} />
+                </button>
+              </p>
+            )}
+            {filesTooBig && (
+              <p className="px-2 pb-1 text-xs text-danger">
+                The attached text is about {formatTokens(fileTokens)} tokens, more than half of the {formatTokens(contextSize)} context:
+                the model may lose part of it or of the conversation.
+              </p>
+            )}
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={acceptFor(canSee)}
+                  className="hidden"
+                  onChange={(e) => {
+                    void addFiles([...(e.target.files ?? [])]);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!ollamaRunning}
+                  aria-label="Attach files"
+                  title={canSee === false ? "Attach text files (this model can't see images)" : "Attach text files or images"}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:opacity-40"
+                >
+                  <PaperclipIcon width={16} height={16} />
+                </button>
                 <ModelPicker
                   models={models}
                   model={model}
@@ -566,7 +672,7 @@ export function Chat({
               ) : (
                 <button
                   onClick={sendDraft}
-                  disabled={!ready || !draft.trim()}
+                  disabled={!ready || (!draft.trim() && !pending.length)}
                   aria-label="Send"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-grad text-accent-fg transition-opacity disabled:opacity-30"
                 >

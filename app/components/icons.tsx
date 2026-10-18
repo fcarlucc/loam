@@ -94,3 +94,9 @@ export const BellIcon = (p: SVGProps<SVGSVGElement>) => (
 export const BellOffIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M8.6 5.6A6 6 0 0 1 18 11v5l1.5 2H9.5M6 11v5l-1.5 2h2.5" /><path d="M10 20a2 2 0 0 0 4 0" /><path d="M4 4l16 16" /></svg>
 );
+export const PaperclipIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M20.5 11.5l-8.2 8.2a5 5 0 0 1-7-7l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.8 8.8a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8" /></svg>
+);
+export const FileIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
+);

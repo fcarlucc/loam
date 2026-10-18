@@ -2,7 +2,18 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { isKeepAlive, KEEP_ALIVE_DEFAULT, parseSettings } from "./settings";
-import type { BenchmarkResult, ChatMessage, ChatSettings, ChatSummary, ReplyStats, Role, SearchHit, Usage } from "./types";
+import type {
+  Attachment,
+  BenchmarkResult,
+  ChatMessage,
+  ChatSettings,
+  ChatSummary,
+  NewAttachment,
+  ReplyStats,
+  Role,
+  SearchHit,
+  Usage,
+} from "./types";
 
 // Title of chats created by earlier versions before their first message.
 export const DEFAULT_TITLE = "New chat";
@@ -101,6 +112,23 @@ function migrate(conn: DatabaseSync) {
     }
   }
   conn.exec("CREATE INDEX IF NOT EXISTS messages_parent_idx ON messages(parent_id)");
+
+  // Files attached to user messages, kept with the chat and deleted with it. Text files keep their text,
+  // images their bytes (already resized by the page). Not part of the search index.
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS attachments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      name       TEXT    NOT NULL,
+      type       TEXT    NOT NULL, -- MIME type
+      kind       TEXT    NOT NULL CHECK (kind IN ('text', 'image')),
+      size       INTEGER NOT NULL, -- bytes
+      text       TEXT,
+      data       BLOB,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS attachments_message_idx ON attachments(message_id);
+  `);
 
   // Full-text index over message text for search, kept in sync by triggers (cascade deletes included).
   // Accents are ignored, so "cafe" finds "café".
@@ -227,15 +255,18 @@ export function getPath(chatId: number, leafId: number | null = getLeafId(chatId
   const byId = new Map(rows.map((r) => [r.id, r]));
   const siblings = new Map<number | null, number[]>();
   for (const r of rows) siblings.set(r.parent_id, [...(siblings.get(r.parent_id) ?? []), r.id]);
+  const attachments = attachmentsOf(chatId);
 
   const path: ChatMessage[] = [];
   for (let row = leafId === null ? undefined : byId.get(leafId); row; row = row.parent_id === null ? undefined : byId.get(row.parent_id)) {
     const ids = siblings.get(row.parent_id) ?? [row.id];
     const stats = parseJson(row.stats) as ReplyStats | undefined;
+    const files = attachments.get(row.id);
     path.unshift({
       id: row.id,
       role: row.role,
       content: row.content,
+      ...(files ? { attachments: files } : {}),
       ...(row.thinking ? { thinking: row.thinking } : {}),
       ...(stats ? { stats } : {}),
       ...(ids.length > 1 ? { versions: { ids, index: ids.indexOf(row.id) } } : {}),
@@ -259,6 +290,63 @@ export function addMessage(
   const id = Number(lastInsertRowid);
   db().prepare("UPDATE chats SET updated_at = ?, leaf_id = ? WHERE id = ?").run(now, id, chatId);
   return id;
+}
+
+type AttachmentRow = Attachment & { id: number; message_id: number };
+
+export function addAttachments(messageId: number, list: NewAttachment[]) {
+  const insert = db().prepare(
+    "INSERT INTO attachments (message_id, name, type, kind, size, text, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+  );
+  const now = Date.now();
+  for (const a of list) {
+    if (a.kind === "image") {
+      const bytes = Buffer.from(a.data, "base64");
+      insert.run(messageId, a.name, a.type, a.kind, bytes.length, null, bytes, now);
+    } else {
+      insert.run(messageId, a.name, a.type, a.kind, Buffer.byteLength(a.data), a.data, null, now);
+    }
+  }
+}
+
+// A new version of a message keeps the files of the one it replaces.
+export function copyAttachments(fromMessageId: number, toMessageId: number) {
+  db()
+    .prepare(
+      `INSERT INTO attachments (message_id, name, type, kind, size, text, data, created_at)
+       SELECT ?, name, type, kind, size, text, data, ? FROM attachments WHERE message_id = ? ORDER BY id`,
+    )
+    .run(toMessageId, Date.now(), fromMessageId);
+}
+
+// What the page shows about each message's files, by message id (only messages that have any).
+function attachmentsOf(chatId: number) {
+  const rows = db()
+    .prepare(
+      `SELECT a.id, a.message_id, a.name, a.type, a.kind, a.size FROM attachments a
+       JOIN messages m ON m.id = a.message_id WHERE m.chat_id = ? ORDER BY a.id`,
+    )
+    .all(chatId) as AttachmentRow[];
+  const byMessage = new Map<number, Attachment[]>();
+  for (const { message_id, ...a } of rows) byMessage.set(message_id, [...(byMessage.get(message_id) ?? []), a]);
+  return byMessage;
+}
+
+// What goes to the model for one message: text files, and images as base64.
+export function attachmentContents(messageId: number) {
+  const rows = db()
+    .prepare("SELECT name, kind, text, data FROM attachments WHERE message_id = ? ORDER BY id")
+    .all(messageId) as { name: string; kind: Attachment["kind"]; text: string | null; data: Uint8Array | null }[];
+  return {
+    files: rows.filter((r) => r.kind === "text").map((r) => ({ name: r.name, text: r.text ?? "" })),
+    images: rows.filter((r) => r.kind === "image").map((r) => Buffer.from(r.data ?? new Uint8Array()).toString("base64")),
+  };
+}
+
+export function getAttachment(id: number) {
+  return db().prepare("SELECT id, name, type, kind, size, text, data FROM attachments WHERE id = ?").get(id) as
+    | (Attachment & { id: number; text: string | null; data: Uint8Array | null })
+    | undefined;
 }
 
 // Shows another version of a message: the branch continues with its newest follow-ups.

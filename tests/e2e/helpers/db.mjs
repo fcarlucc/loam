@@ -12,6 +12,12 @@ export function openDb(path) {
     chat: (id) => plain(db.prepare("SELECT * FROM chats WHERE id = ?").get(id)),
     messages: (chatId) =>
       db.prepare("SELECT id, parent_id, role, content, model, stats, thinking FROM messages WHERE chat_id = ? ORDER BY id").all(chatId).map(plain),
+    attachments: (messageId) =>
+      db
+        .prepare("SELECT id, message_id, name, type, kind, size, text, length(data) AS bytes FROM attachments WHERE message_id = ? ORDER BY id")
+        .all(messageId)
+        .map(plain),
+    attachmentCount: () => db.prepare("SELECT count(*) AS n FROM attachments").get().n,
     close: () => db.close(),
   };
 }

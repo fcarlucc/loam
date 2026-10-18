@@ -7,6 +7,13 @@ export function formatBytes(bytes: number) {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
+// File sizes: 900 -> "900 B", 12800 -> "13 KB", 1400000 -> "1.3 MB"
+export function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
+  return `${+(bytes / 1024 ** 2).toFixed(1)} MB`;
+}
+
 // 800 -> "0.8 s", 12400 -> "12 s", 95000 -> "1 min 35 s"
 export function formatDuration(ms: number) {
   const s = ms / 1000;

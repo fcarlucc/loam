@@ -19,10 +19,10 @@ const EXCERPT = 1500; // characters of each message shown to the model
 
 // Asks for a title in the conversation's language. The exchange is quoted inside one user message rather
 // than replayed as the conversation itself, so the model names it instead of continuing it.
-export function titlePrompt(question: string, answer: string | undefined) {
+export function titlePrompt(question: string, answer: string | undefined, files: string[] = []) {
   return [
     "Write a title for the conversation below: at most six words, in the language of the conversation, no quotes and no final period. Reply with the title only.",
-    `User: ${cut(question, EXCERPT)}`,
+    `User: ${cut(question, EXCERPT)}${files.length ? ` (attached: ${files.join(", ")})` : ""}`,
     ...(answer ? [`Assistant: ${cut(answer, EXCERPT)}`] : []),
   ].join("\n\n");
 }

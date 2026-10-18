@@ -6,6 +6,7 @@ import { startApp } from "./helpers/app.mjs";
 import { openDb } from "./helpers/db.mjs";
 import { startFakeOllama } from "./helpers/fake-ollama.mjs";
 import { apiClient } from "./helpers/http.mjs";
+import { attachmentsSuite } from "./suites/attachments.mjs";
 import { chatSuite } from "./suites/chat.mjs";
 import { chatsSuite } from "./suites/chats.mjs";
 import { ollamaSuite } from "./suites/ollama.mjs";
@@ -31,6 +32,7 @@ after(async () => {
 
 securitySuite(env);
 chatSuite(env);
+attachmentsSuite(env);
 chatsSuite(env);
 settingsSuite(env);
 ollamaSuite(env);

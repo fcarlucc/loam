@@ -29,9 +29,25 @@ export type ChatSummary = {
 // Other versions of the same message (edits of a user message, regenerations of a reply), oldest first.
 export type Versions = { ids: number[]; index: number };
 
+// A file attached to a user message. Text files go to the model inside the message; images go through
+// Ollama's `images`, to models that can see. `id` is missing until the server has saved the message.
+export type AttachmentKind = "text" | "image";
+// `preview` (page only) shows an image while its message is still being sent: a data URL, never saved.
+export type Attachment = { id?: number; name: string; type: string; size: number; kind: AttachmentKind; preview?: string };
+// What the page sends with a message: the file's text, or an image's bytes as base64.
+export type NewAttachment = { name: string; type: string; kind: AttachmentKind; data: string };
+
 // A message on the chat's active branch. `id` is missing until the server has saved it.
 // `thinking` is what a reasoning model thought before the reply: shown, never sent back to the model.
-export type ChatMessage = { id?: number; role: Role; content: string; thinking?: string; stats?: ReplyStats; versions?: Versions };
+export type ChatMessage = {
+  id?: number;
+  role: Role;
+  content: string;
+  attachments?: Attachment[];
+  thinking?: string;
+  stats?: ReplyStats;
+  versions?: Versions;
+};
 
 // Events streamed by /api/chat, one JSON object per line.
 export type ChatEvent =

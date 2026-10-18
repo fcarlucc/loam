@@ -1,12 +1,27 @@
+import { inlineFiles, parseAttachments } from "@/lib/attachments";
 import { isValidModelName } from "@/lib/catalog";
-import { addMessage, createChat, DEFAULT_TITLE, getChat, getKeepAlive, getLeafId, getMessage, getPath, transaction, updateChat } from "@/lib/db";
+import {
+  addAttachments,
+  addMessage,
+  attachmentContents,
+  copyAttachments,
+  createChat,
+  DEFAULT_TITLE,
+  getChat,
+  getKeepAlive,
+  getLeafId,
+  getMessage,
+  getPath,
+  transaction,
+  updateChat,
+} from "@/lib/db";
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
 import { readNdjson } from "@/lib/ndjson";
 import { type ChatChunk, loadedContextLength, modelCapabilities, OLLAMA_URL, ollamaError, toStats } from "@/lib/ollama";
 import { KEEP_ALIVE_DEFAULT, parseSettings } from "@/lib/settings";
 import { makeTitle } from "@/lib/title";
-import type { ChatEvent, ReplyStats } from "@/lib/types";
+import type { ChatEvent, ChatMessage, ReplyStats } from "@/lib/types";
 
 // Streams a reply as NDJSON events (see ChatEvent). One of:
 //   { content }                new message at the end of the branch on screen (chatId null starts a chat)
@@ -25,13 +40,16 @@ export async function POST(request: Request) {
   const retry = body.retry === true;
   const sending = typeof body.content === "string";
   const modes = [sending, regenerate !== null, retry].filter(Boolean).length;
+  const attachments = parseAttachments(body.attachments);
+  if (!Array.isArray(attachments)) return jsonError(attachments.error, 400);
   if (
     (chatId !== null && typeof chatId !== "number") ||
     (editOf !== null && (typeof editOf !== "number" || !sending)) ||
     (regenerate !== null && typeof regenerate !== "number") ||
     modes !== 1 ||
     !model ||
-    (sending && !content)
+    // A message needs text or a file, and only a message can carry files.
+    (sending ? !content && !attachments.length : attachments.length > 0)
   ) {
     return jsonError("Invalid request", 400);
   }
@@ -61,8 +79,26 @@ export async function POST(request: Request) {
     userParent = getLeafId(chat.id);
   }
   const branchEnd = sending ? userParent : replyParent;
-  const history = chat && branchEnd !== null ? getPath(chat.id, branchEnd).map(({ role, content }) => ({ role, content })) : [];
-  if (sending) history.push({ role: "user", content });
+  // Files travel with their message on every turn: text inside the message, images through `images` for
+  // models that can see. Ollama refuses images on the others, so there they are left out: the model just
+  // doesn't see them (the chat may have moved to another model since).
+  const capabilities = await modelCapabilities(model);
+  const canSee = capabilities?.includes("vision") ?? true; // unknown (Ollama unreachable?): let Ollama decide
+  if (!canSee && attachments.some((a) => a.kind === "image")) return jsonError(`${model} can't see images`, 400);
+  const toModelMessage = (m: Pick<ChatMessage, "id" | "role" | "content" | "attachments">) => {
+    if (!m.attachments?.length || m.id === undefined) return { role: m.role, content: m.content };
+    const { files, images } = attachmentContents(m.id);
+    return { role: m.role, content: inlineFiles(m.content, files), ...(canSee && images.length ? { images } : {}) };
+  };
+  const history: { role: string; content: string; images?: string[] }[] =
+    chat && branchEnd !== null ? getPath(chat.id, branchEnd).map(toModelMessage) : [];
+  if (sending) {
+    // An edit without new files keeps the files of the message it replaces (they are copied when it is saved).
+    const kept = editOf !== null && !attachments.length ? attachmentContents(editOf) : undefined;
+    const files = kept?.files ?? attachments.filter((a) => a.kind === "text").map((a) => ({ name: a.name, text: a.data }));
+    const images = kept?.images ?? attachments.filter((a) => a.kind === "image").map((a) => a.data);
+    history.push({ role: "user", content: inlineFiles(content, files), ...(canSee && images.length ? { images } : {}) });
+  }
   if (history.at(-1)?.role !== "user") return jsonError("Nothing to reply to", 400);
 
   const options = {
@@ -72,7 +108,7 @@ export async function POST(request: Request) {
   const keepAlive = getKeepAlive();
   const messages = settings.system ? [{ role: "system", content: settings.system }, ...history] : history;
   // Reasoning off, on or at a level, only for models that can reason: Ollama refuses `think` on the others.
-  const think = settings.think !== undefined && (await modelCapabilities(model))?.includes("thinking") ? settings.think : undefined;
+  const think = settings.think !== undefined && capabilities?.includes("thinking") ? settings.think : undefined;
 
   const upstream = new AbortController();
   // The client left (other chat, closed tab): stop Ollama too, even while the model is still loading.
@@ -99,11 +135,15 @@ export async function POST(request: Request) {
   if (!res.ok || !res.body) return jsonError(await ollamaError(res), 502);
   const source = res.body;
 
+  const placeholder = makeTitle(content || attachments[0]?.name || ""); // until the model names the chat
   const { id, answering } = transaction(() => {
-    const id = chat?.id ?? createChat(makeTitle(content), model, settings);
+    const id = chat?.id ?? createChat(placeholder, model, settings);
     const answering = sending ? addMessage(id, "user", content, userParent) : replyParent!;
+    // The files sent with the message; an edit without new files keeps those of the message it replaces.
+    if (sending && attachments.length) addAttachments(answering, attachments);
+    else if (sending && editOf !== null) copyAttachments(editOf, answering);
     const retitle = chat?.title === DEFAULT_TITLE && sending && editOf === null;
-    updateChat(id, { model, settings, ...(retitle ? { title: makeTitle(content) } : {}) });
+    updateChat(id, { model, settings, ...(retitle ? { title: placeholder } : {}) });
     return { id, answering };
   });
 

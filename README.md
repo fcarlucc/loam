@@ -17,6 +17,9 @@ A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats
 - Optional desktop notification when a reply finishes while you are in another app or tab (bell in the sidebar)
 - Reasoning models: turn the reasoning off, on or to a level per chat (next to the model picker) and read what the
   model thought in a fold-out block under the reply. The reasoning is kept with the reply but never sent back to the model
+- Attachments: drop, paste or pick text and code files (up to 8 per message, 200K characters each), and images for
+  models that can see them, resized in the browser to about 1024 px. Files stay with the chat on this Mac and are
+  deleted with it; a warning shows when they take more than half of the model's context. No PDF yet
 
 ## Requirements
 

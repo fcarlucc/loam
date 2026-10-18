@@ -16,8 +16,10 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/chats/[id]/tit
   const question = branch.find((m) => m.role === "user");
   if (!question) return jsonError("Nothing to title", 400);
   const answer = branch.find((m) => m.role === "assistant");
+  const files = (question.attachments ?? []).map((a) => a.name);
   const keepAlive = getKeepAlive();
-  if (!isPlaceholderTitle(chat.title, question.content) || keepAlive === 0) return Response.json({ chat, named: false });
+  // A message that was nothing but a file was titled after the file.
+  if (!isPlaceholderTitle(chat.title, question.content || files[0] || "") || keepAlive === 0) return Response.json({ chat, named: false });
 
   // Reasoning off where there is any: a title isn't worth thinking about. The chat's system prompt stays
   // out too: a persona would get in the way of naming the conversation.
@@ -29,7 +31,7 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/chats/[id]/tit
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: chat.model,
-        messages: [{ role: "user", content: titlePrompt(question.content, answer?.content) }],
+        messages: [{ role: "user", content: titlePrompt(question.content, answer?.content, files) }],
         stream: false,
         options: { num_predict: 32, temperature: 0 },
         ...(canThink ? { think: false } : {}),

@@ -13,7 +13,9 @@ export const MODELS = {
   "loading:latest": { size: 3_000_000_000, loadMs: 2500 }, // "loads the model" for 2.5 s before the first byte
   "flaky:latest": { size: 500_000_000, fails: true }, // accepts the request, then streams an error instead of text
   "thinker:latest": { size: 4_000_000_000, thinks: true }, // reasons out loud before replying, unless told not to (think: false)
+  "seer:latest": { size: 5_000_000_000, sees: true }, // accepts images; the others refuse them like Ollama does
 };
+export const NO_VISION_ERROR = "Multimodal data provided, but model does not support multimodal requests.";
 export const FLAKY_ERROR = "the fake model fell over";
 export const THINKING_PREFIX = "Thinking about: ";
 export const PULL_ERROR = "pull model manifest: file does not exist";
@@ -84,7 +86,7 @@ export async function startFakeOllama() {
         return json(200, {
           model_info: { "general.architecture": "fake", "fake.context_length": 8192 },
           parameters: 'temperature 0.7\nstop "<end>"',
-          capabilities: spec.thinks ? ["completion", "thinking"] : ["completion"],
+          capabilities: ["completion", ...(spec.thinks ? ["thinking"] : []), ...(spec.sees ? ["vision"] : [])],
           ...(spec.thinks ? { thinking: { values: [false, "low", "medium"], default: "medium" } } : {}),
           license: "FAKE LICENSE\nline 2\nline 3\nline 4 never shown",
           details: DETAILS,
@@ -127,6 +129,7 @@ export async function startFakeOllama() {
 
       case "POST /api/chat": {
         if (!spec) return notFound(body.model);
+        if (!spec.sees && (body.messages ?? []).some((m) => m.images?.length)) return json(400, { error: NO_VISION_ERROR });
         if (spec.loadMs) await sleep(spec.loadMs);
         if (res.destroyed) return; // the app gave up while the model was "loading"
 
