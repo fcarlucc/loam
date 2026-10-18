@@ -19,6 +19,10 @@ export const THINKING_PREFIX = "Thinking about: ";
 export const PULL_ERROR = "pull model manifest: file does not exist";
 const DETAILS = { family: "fake", parameter_size: "1B", quantization_level: "Q4_0" };
 
+// A user message containing <<say: text>> makes the "model" answer exactly that text, for tests that need a
+// particular reply (a title, say).
+const SAY = /<<say:\s*([\s\S]*?)\s*>>/;
+
 // What the "model" answers: the last user message, then everything it was given, so a test can tell
 // which branch of a conversation (and which system prompt) reached it.
 export function echo(messages) {
@@ -126,7 +130,8 @@ export async function startFakeOllama() {
         if (spec.loadMs) await sleep(spec.loadMs);
         if (res.destroyed) return; // the app gave up while the model was "loading"
 
-        const text = spec.words ? Array.from({ length: spec.words }, (_, i) => `tick ${i + 1}`).join(" ") : echo(body.messages ?? []);
+        const scripted = SAY.exec((body.messages ?? []).filter((m) => m.role === "user").at(-1)?.content ?? "")?.[1];
+        const text = scripted ?? (spec.words ? Array.from({ length: spec.words }, (_, i) => `tick ${i + 1}`).join(" ") : echo(body.messages ?? []));
         const parts = text.match(/\S+\s*/g) ?? [text];
         const thought =
           spec.thinks && body.think !== false ? `${THINKING_PREFIX}${(body.messages ?? []).filter((m) => m.role === "user").at(-1)?.content ?? ""}` : "";

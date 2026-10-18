@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { chat } from "../helpers/http.mjs";
 
 const MODEL = "fake:latest";
+const THINKER = "thinker:latest";
 const MARK_START = "\u0002";
 const MARK_END = "\u0003";
 
@@ -115,6 +116,79 @@ export function chatsSuite(env) {
         assert.ok(Array.isArray(res.data.hits));
       }
       for (const id of [a.id, b.id]) await env.api.delete(`/api/chats/${id}`);
+    });
+  });
+  describe("chat titles", () => {
+    const name = (id) => env.api.json(`/api/chats/${id}/title`, { method: "POST" });
+    const chatRequests = (from) => env.ollama.since(from).filter((r) => r.path === "/api/chat");
+
+    it("the model names the chat after its first reply, with no reasoning and no system prompt", async () => {
+      const content = 'Budget? <<say: **"Title: Budget plan."**>>';
+      const r = await chat(env.api, { chatId: null, content, model: THINKER, settings: { system: "You are a pirate.", think: "low" } });
+      assert.equal(env.db.chat(r.id).title, content, "the first message is the title until the model names the chat");
+
+      const seen = env.ollama.requests.length;
+      const res = await name(r.id);
+      assert.equal(res.status, 200);
+      assert.equal(res.data.named, true);
+      assert.equal(res.data.chat.title, "Budget plan", "markdown, a 'Title:' prefix, quotes and the final period are dropped");
+      assert.equal(env.db.chat(r.id).title, "Budget plan");
+
+      const [req, ...more] = chatRequests(seen);
+      assert.equal(more.length, 0, "one request to Ollama");
+      assert.equal(req.body.model, THINKER);
+      assert.equal(req.body.stream, false);
+      assert.equal(req.body.think, false, "no reasoning for a title");
+      assert.deepEqual(req.body.options, { num_predict: 32, temperature: 0 });
+      assert.equal(req.body.messages.length, 1, "the exchange is quoted in one user message");
+      assert.equal(req.body.messages[0].role, "user");
+      assert.match(req.body.messages[0].content, /User: Budget\?/);
+      assert.match(req.body.messages[0].content, /Assistant: \*\*"Title: Budget plan\."\*\*/);
+      assert.ok(!req.body.messages[0].content.includes("pirate"), "the chat's system prompt stays out of it");
+
+      // Asked again, the chat keeps the title it has.
+      assert.equal((await name(r.id)).data.named, false);
+      assert.equal(chatRequests(seen).length, 1);
+      assert.equal((await name(999999999)).status, 404);
+      await env.api.delete(`/api/chats/${r.id}`);
+    });
+
+    it("a chat the user renamed is left alone", async () => {
+      const r = await chat(env.api, { chatId: null, content: "Hello <<say: Greetings>>", model: MODEL });
+      await env.api.patch(`/api/chats/${r.id}`, { title: "Mine" });
+      const seen = env.ollama.requests.length;
+      const res = await name(r.id);
+      assert.deepEqual([res.status, res.data.named, res.data.chat.title], [200, false, "Mine"]);
+      assert.equal(env.ollama.since(seen).length, 0, "Ollama isn't asked");
+      await env.api.delete(`/api/chats/${r.id}`);
+    });
+
+    it("no naming when models unload right after each reply; otherwise the keep-alive goes along", async () => {
+      const content = "Hi <<say: Small talk>>";
+      const r = await chat(env.api, { chatId: null, content, model: MODEL });
+      await env.api.put("/api/settings", { keepAlive: 0 });
+      let seen = env.ollama.requests.length;
+      let res = await name(r.id);
+      assert.deepEqual([res.data.named, res.data.chat.title], [false, content]);
+      assert.equal(env.ollama.since(seen).length, 0, "the model would have to be loaded again");
+
+      await env.api.put("/api/settings", { keepAlive: 60 });
+      seen = env.ollama.requests.length;
+      res = await name(r.id);
+      assert.deepEqual([res.data.named, res.data.chat.title], [true, "Small talk"]);
+      const [req] = chatRequests(seen);
+      assert.equal(req.body.keep_alive, 60);
+      assert.equal("think" in req.body, false, "a model that can't reason isn't told about it");
+      await env.api.put("/api/settings", { keepAlive: 300 });
+      await env.api.delete(`/api/chats/${r.id}`);
+    });
+
+    it("a long-winded title is cut short", async () => {
+      const r = await chat(env.api, { chatId: null, content: `Long <<say: ${"word ".repeat(20)}>>`, model: MODEL });
+      const { title } = (await name(r.id)).data.chat;
+      assert.equal(Array.from(title).length, 60);
+      assert.ok(title.startsWith("word word ") && title.endsWith("…"));
+      await env.api.delete(`/api/chats/${r.id}`);
     });
   });
 }

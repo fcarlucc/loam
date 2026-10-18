@@ -270,6 +270,8 @@ export function Chat({
     if (cut < 0) return;
     const replaced = action.kind === "regenerate" ? before[cut] : undefined;
     const content = action.kind === "send" || action.kind === "edit" ? action.content : null;
+    // The chat's first reply: once it is in, the model names the chat.
+    const firstReply = !before.slice(0, cut).some((m) => m.role === "assistant");
 
     setError(null);
     setEditing(null);
@@ -285,6 +287,7 @@ export function Chat({
     const active = { controller, chatId: null as number | null };
     activeRef.current = active;
     let accepted = false;
+    let finished = false; // the server sent its final event
     let text = ""; // the reply so far
     let failure: string | null = null;
     try {
@@ -312,7 +315,6 @@ export function Chat({
       if (chatId === null && active.chatId !== null) onChatCreated(active.chatId);
       onChatsChanged(); // the message is saved: show the chat and its title in the sidebar right away
 
-      let finished = false;
       for await (const event of readNdjson<ChatEvent>(res.body)) {
         if (controller.signal.aborted) break;
         if (event.type === "error") throw new StreamError(event.message);
@@ -356,7 +358,17 @@ export function Chat({
       if (activeRef.current === active) activeRef.current = null;
       setStreaming(false);
       onChatsChanged();
+      // In the background, so the composer is free right away; the sidebar picks the title up when it lands.
+      if (finished && !controller.signal.aborted && firstReply && active.chatId !== null) void nameChat(active.chatId);
     }
+  }
+
+  // Has the model name the chat (see /api/chats/[id]/title). Failing quietly is fine: the placeholder title stays.
+  async function nameChat(id: number) {
+    try {
+      const res = await fetch(`/api/chats/${id}/title`, { method: "POST" });
+      if (res.ok && (await res.json()).named) onChatsChanged();
+    } catch {}
   }
 
   return (

@@ -5,13 +5,8 @@ import { jsonError, readJson } from "@/lib/http";
 import { readNdjson } from "@/lib/ndjson";
 import { type ChatChunk, loadedContextLength, modelCapabilities, OLLAMA_URL, ollamaError, toStats } from "@/lib/ollama";
 import { KEEP_ALIVE_DEFAULT, parseSettings } from "@/lib/settings";
+import { makeTitle } from "@/lib/title";
 import type { ChatEvent, ReplyStats } from "@/lib/types";
-
-// The first message, whitespace collapsed, cut on a character boundary.
-function makeTitle(content: string) {
-  const chars = Array.from(content.replace(/\s+/g, " "));
-  return chars.length > 48 ? `${chars.slice(0, 47).join("")}…` : chars.join("");
-}
 
 // Streams a reply as NDJSON events (see ChatEvent). One of:
 //   { content }                new message at the end of the branch on screen (chatId null starts a chat)

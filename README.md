@@ -7,6 +7,8 @@ A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats
 - Per-chat settings in a right sidebar: system prompt, temperature, context length, plus defaults for new chats
 - Stats under every reply (speed, tokens, how full the context is), with a warning before old messages get dropped
 - Chat history in the sidebar (rename, delete), grouped by date, with full-text search across every message
+- Chats are named by the model after the first reply (a few words, in the language of the conversation); rename them
+  anytime. Skipped when models are set to unload right after each reply, since naming would load the model again
 - Model picker next to the composer, with one-click download of popular models, labelled by how well they fit this Mac's memory
 - Compare two models side by side on the same prompt (answers, speed, load time; not saved)
 - Models & memory panel: what's loaded in RAM, free it, how long models stay loaded, model details, delete models
