@@ -13,6 +13,8 @@ A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats
 - Usage dashboard (activity, tokens, speed per model) and a repeatable speed benchmark
 - Start/stop Ollama from the sidebar; light, dark and system themes
 - Optional desktop notification when a reply finishes while you are in another app or tab (bell in the sidebar)
+- Reasoning models: turn the reasoning off, on or to a level per chat (next to the model picker) and read what the
+  model thought in a fold-out block under the reply. The reasoning is kept with the reply but never sent back to the model
 
 ## Requirements
 

@@ -18,6 +18,8 @@ import {
 } from "./icons";
 import { Markdown } from "./Markdown";
 import { ModelPicker } from "./ModelPicker";
+import { Reasoning } from "./Reasoning";
+import { ReasoningPicker } from "./ReasoningPicker";
 import { nearlyFull, StatsLine } from "./StatsLine";
 import { SETTINGS_SIDEBAR_ID, SettingsSidebar } from "./SettingsSidebar";
 
@@ -195,6 +197,13 @@ export function Chat({
     }, 400);
   }
 
+  function changeThink(think: Settings["think"]) {
+    const next = { ...settings };
+    if (think === undefined) delete next.think;
+    else next.think = think;
+    changeSettings(next);
+  }
+
   // What is sent: a context length above the model's maximum is capped to it.
   const max = modelInfo?.contextMax;
   const effectiveSettings: Settings =
@@ -312,7 +321,11 @@ export function Chat({
         setMessages((m) => {
           const tail = m[m.length - 1];
           const next =
-            event.type === "delta" ? { ...tail, content: tail.content + event.text } : { ...tail, stats: event.stats };
+            event.type === "delta"
+              ? { ...tail, content: tail.content + event.text }
+              : event.type === "thinking"
+                ? { ...tail, thinking: (tail.thinking ?? "") + event.text }
+                : { ...tail, stats: event.stats };
           return [...m.slice(0, -1), next];
         });
       }
@@ -447,7 +460,8 @@ export function Chat({
                       highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""
                     }`}
                   >
-                    {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && <TypingDots />}
+                    {m.thinking && <Reasoning text={m.thinking} live={streaming && isLast && !m.content} ms={m.stats?.thinkingMs} />}
+                    {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && !m.thinking && <TypingDots />}
                     {m.content && !(streaming && isLast) && (
                       // The latest reply, and replies with versions, always show their actions; others on hover or focus.
                       <div
@@ -515,14 +529,19 @@ export function Chat({
               className="max-h-[200px] w-full resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
             />
             <div className="flex items-center justify-between gap-2">
-              <ModelPicker
-                models={models}
-                model={model}
-                ollamaRunning={ollamaRunning}
-                disabled={streaming}
-                onChange={onModelChange}
-                onInstalled={onModelInstalled}
-              />
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <ModelPicker
+                  models={models}
+                  model={model}
+                  ollamaRunning={ollamaRunning}
+                  disabled={streaming}
+                  onChange={onModelChange}
+                  onInstalled={onModelInstalled}
+                />
+                {modelInfo?.thinking && (
+                  <ReasoningPicker options={modelInfo.thinking} value={settings.think} disabled={streaming} onChange={changeThink} />
+                )}
+              </div>
               {streaming ? (
                 <button
                   onClick={() => void stop()}

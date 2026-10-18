@@ -7,6 +7,14 @@ export function formatBytes(bytes: number) {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
+// 800 -> "0.8 s", 12400 -> "12 s", 95000 -> "1 min 35 s"
+export function formatDuration(ms: number) {
+  const s = ms / 1000;
+  if (s < 10) return `${s.toFixed(1)} s`;
+  if (s < 60) return `${Math.round(s)} s`;
+  return `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
+}
+
 // When Ollama will unload a model, as shown to the user.
 export function formatUnload(expiresAt: string | null, now = Date.now()) {
   if (!expiresAt) return "";

@@ -11,7 +11,7 @@ export function openDb(path) {
     counts: () => plain(db.prepare("SELECT (SELECT count(*) FROM chats) AS chats, (SELECT count(*) FROM messages) AS messages").get()),
     chat: (id) => plain(db.prepare("SELECT * FROM chats WHERE id = ?").get(id)),
     messages: (chatId) =>
-      db.prepare("SELECT id, parent_id, role, content, model, stats FROM messages WHERE chat_id = ? ORDER BY id").all(chatId).map(plain),
+      db.prepare("SELECT id, parent_id, role, content, model, stats, thinking FROM messages WHERE chat_id = ? ORDER BY id").all(chatId).map(plain),
     close: () => db.close(),
   };
 }

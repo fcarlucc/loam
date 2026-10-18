@@ -31,11 +31,15 @@ export function ollamaSuite(env) {
         contextMax: 8192,
         temperature: 0.7,
         capabilities: ["completion"],
+        thinking: null,
         family: "fake",
         parameterSize: "1B",
         quantization: "Q4_0",
         license: "FAKE LICENSE line 2 line 3",
       });
+      const thinker = (await env.api.json("/api/ollama/show?model=thinker:latest")).data;
+      assert.ok(thinker.capabilities.includes("thinking"));
+      assert.deepEqual(thinker.thinking, { values: [false, "low", "medium"], default: "medium" }, "what `think` accepts, and the default");
       const unknown = await env.api.json("/api/ollama/show?model=nope:latest");
       assert.equal(unknown.status, 502);
       assert.equal(unknown.data.error, "model 'nope:latest' not found");

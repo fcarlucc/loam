@@ -53,6 +53,7 @@ function migrate(conn: DatabaseSync) {
   `);
   addColumn(conn, "chats", "settings", "TEXT"); // JSON ChatSettings
   addColumn(conn, "messages", "stats", "TEXT"); // JSON ReplyStats
+  addColumn(conn, "messages", "thinking", "TEXT"); // what a reasoning model thought before the reply
 
   // Which model wrote each reply, for usage per model. Replies saved before this existed get the
   // chat's current model, the best guess available.
@@ -148,7 +149,7 @@ function parseJson(text: unknown): unknown {
 }
 
 type ChatRow = Omit<ChatSummary, "settings"> & { settings: string | null };
-type MessageRow = { id: number; parent_id: number | null; role: Role; content: string; stats: string | null };
+type MessageRow = { id: number; parent_id: number | null; role: Role; content: string; stats: string | null; thinking: string | null };
 
 const CHAT_COLUMNS = "id, title, model, settings, created_at, updated_at";
 const toChat = ({ settings, ...row }: ChatRow): ChatSummary => ({ ...row, settings: parseSettings(parseJson(settings)) ?? {} });
@@ -201,7 +202,7 @@ export function deleteChat(id: number) {
 
 function messageRows(chatId: number) {
   return db()
-    .prepare("SELECT id, parent_id, role, content, stats FROM messages WHERE chat_id = ? ORDER BY id")
+    .prepare("SELECT id, parent_id, role, content, stats, thinking FROM messages WHERE chat_id = ? ORDER BY id")
     .all(chatId) as MessageRow[];
 }
 
@@ -235,6 +236,7 @@ export function getPath(chatId: number, leafId: number | null = getLeafId(chatId
       id: row.id,
       role: row.role,
       content: row.content,
+      ...(row.thinking ? { thinking: row.thinking } : {}),
       ...(stats ? { stats } : {}),
       ...(ids.length > 1 ? { versions: { ids, index: ids.indexOf(row.id) } } : {}),
     });
@@ -248,12 +250,12 @@ export function addMessage(
   role: Role,
   content: string,
   parentId: number | null,
-  reply?: { model: string; stats?: ReplyStats },
+  reply?: { model: string; stats?: ReplyStats; thinking?: string },
 ) {
   const now = Date.now();
   const { lastInsertRowid } = db()
-    .prepare("INSERT INTO messages (chat_id, parent_id, role, content, model, stats, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(chatId, parentId, role, content, reply?.model ?? null, reply?.stats ? JSON.stringify(reply.stats) : null, now);
+    .prepare("INSERT INTO messages (chat_id, parent_id, role, content, model, stats, thinking, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .run(chatId, parentId, role, content, reply?.model ?? null, reply?.stats ? JSON.stringify(reply.stats) : null, reply?.thinking ?? null, now);
   const id = Number(lastInsertRowid);
   db().prepare("UPDATE chats SET updated_at = ?, leaf_id = ? WHERE id = ?").run(now, id, chatId);
   return id;

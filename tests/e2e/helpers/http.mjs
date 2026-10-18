@@ -52,9 +52,9 @@ export function rawRequest({ port, method = "GET", path, headers = {}, body }) {
   });
 }
 
-// Reads a streamed /api/chat or /api/compare reply: { text, types, stats, error }.
+// Reads a streamed /api/chat or /api/compare reply: { text, thinking, types, stats, error }.
 export async function readEvents(res) {
-  const out = { text: "", types: [], stats: undefined, error: undefined };
+  const out = { text: "", thinking: "", types: [], stats: undefined, error: undefined };
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -68,6 +68,7 @@ export async function readEvents(res) {
       const event = JSON.parse(line);
       out.types.push(event.type);
       if (event.type === "delta") out.text += event.text;
+      if (event.type === "thinking") out.thinking += event.text;
       if (event.type === "done") out.stats = event.stats;
       if (event.type === "error") out.error = event.message;
     }

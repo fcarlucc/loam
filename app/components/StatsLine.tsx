@@ -10,6 +10,7 @@ export function StatsLine({ stats }: { stats: ReplyStats }) {
     `${stats.promptTokens} tokens read, ${stats.tokens} generated`,
     `total ${seconds(stats.totalMs)}`,
     ...(stats.loadMs >= 500 ? [`of which ${seconds(stats.loadMs)} loading the model`] : []),
+    ...(stats.thinkingMs ? [`of which ${seconds(stats.thinkingMs)} reasoning`] : []),
   ].join(" · ");
   return (
     <span title={details} className="ml-1 self-center text-xs text-muted tabular-nums">

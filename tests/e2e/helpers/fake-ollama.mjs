@@ -12,8 +12,10 @@ export const MODELS = {
   "slow:latest": { size: 2_000_000_000, words: 80, wordMs: 50 }, // a 4-second reply, for stop and disconnect tests
   "loading:latest": { size: 3_000_000_000, loadMs: 2500 }, // "loads the model" for 2.5 s before the first byte
   "flaky:latest": { size: 500_000_000, fails: true }, // accepts the request, then streams an error instead of text
+  "thinker:latest": { size: 4_000_000_000, thinks: true }, // reasons out loud before replying, unless told not to (think: false)
 };
 export const FLAKY_ERROR = "the fake model fell over";
+export const THINKING_PREFIX = "Thinking about: ";
 export const PULL_ERROR = "pull model manifest: file does not exist";
 const DETAILS = { family: "fake", parameter_size: "1B", quantization_level: "Q4_0" };
 
@@ -78,7 +80,8 @@ export async function startFakeOllama() {
         return json(200, {
           model_info: { "general.architecture": "fake", "fake.context_length": 8192 },
           parameters: 'temperature 0.7\nstop "<end>"',
-          capabilities: ["completion"],
+          capabilities: spec.thinks ? ["completion", "thinking"] : ["completion"],
+          ...(spec.thinks ? { thinking: { values: [false, "low", "medium"], default: "medium" } } : {}),
           license: "FAKE LICENSE\nline 2\nline 3\nline 4 never shown",
           details: DETAILS,
         });
@@ -125,6 +128,9 @@ export async function startFakeOllama() {
 
         const text = spec.words ? Array.from({ length: spec.words }, (_, i) => `tick ${i + 1}`).join(" ") : echo(body.messages ?? []);
         const parts = text.match(/\S+\s*/g) ?? [text];
+        const thought =
+          spec.thinks && body.think !== false ? `${THINKING_PREFIX}${(body.messages ?? []).filter((m) => m.role === "user").at(-1)?.content ?? ""}` : "";
+        const thoughtParts = thought.match(/\S+\s*/g) ?? [];
         const keep = body.keep_alive ?? 300;
         if (keep === 0) loaded.delete(model);
         else loaded.set(model, new Date(Date.now() + (keep < 0 ? 100 * 365 * 24 : keep / 3600) * 3600 * 1000).toISOString());
@@ -138,7 +144,14 @@ export async function startFakeOllama() {
         };
 
         if (body.stream === false) {
-          return json(200, { model, created_at: now(), message: { role: "assistant", content: text }, done: true, done_reason: "stop", ...timings });
+          return json(200, {
+            model,
+            created_at: now(),
+            message: { role: "assistant", content: text, ...(thought ? { thinking: thought } : {}) },
+            done: true,
+            done_reason: "stop",
+            ...timings,
+          });
         }
         res.writeHead(200, { "Content-Type": "application/x-ndjson" });
         const write = (obj) => {
@@ -152,6 +165,9 @@ export async function startFakeOllama() {
           res.end();
           entry.finished = true;
           return;
+        }
+        for (const part of thoughtParts) {
+          if (!write({ model, created_at: now(), message: { role: "assistant", content: "", thinking: part }, done: false })) return;
         }
         for (const part of parts) {
           if (spec.wordMs) await sleep(spec.wordMs);

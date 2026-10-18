@@ -3,7 +3,7 @@ import { addMessage, createChat, DEFAULT_TITLE, getChat, getKeepAlive, getLeafId
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
 import { readNdjson } from "@/lib/ndjson";
-import { type ChatChunk, loadedContextLength, OLLAMA_URL, ollamaError, toStats } from "@/lib/ollama";
+import { type ChatChunk, loadedContextLength, modelCapabilities, OLLAMA_URL, ollamaError, toStats } from "@/lib/ollama";
 import { KEEP_ALIVE_DEFAULT, parseSettings } from "@/lib/settings";
 import type { ChatEvent, ReplyStats } from "@/lib/types";
 
@@ -76,6 +76,8 @@ export async function POST(request: Request) {
   };
   const keepAlive = getKeepAlive();
   const messages = settings.system ? [{ role: "system", content: settings.system }, ...history] : history;
+  // Reasoning off, on or at a level, only for models that can reason: Ollama refuses `think` on the others.
+  const think = settings.think !== undefined && (await modelCapabilities(model))?.includes("thinking") ? settings.think : undefined;
 
   const upstream = new AbortController();
   // The client left (other chat, closed tab): stop Ollama too, even while the model is still loading.
@@ -91,6 +93,7 @@ export async function POST(request: Request) {
         messages,
         stream: true,
         ...(Object.keys(options).length ? { options } : {}),
+        ...(think !== undefined ? { think } : {}),
         ...(keepAlive !== KEEP_ALIVE_DEFAULT ? { keep_alive: keepAlive } : {}),
       }),
       signal: upstream.signal,
@@ -121,13 +124,15 @@ export async function POST(request: Request) {
   };
 
   let reply = "";
+  let thinking = ""; // kept with the reply, shown under it, never sent back to the model
   let saved = false;
   const save = (stats?: ReplyStats) => {
     if (saved) return;
     saved = true;
     if (!reply) return; // nothing generated: a regenerated reply keeps its previous version on screen
     try {
-      addMessage(id, "assistant", reply, answering, { model, stats }); // also keeps partial replies (without stats)
+      // Also keeps partial replies (without stats).
+      addMessage(id, "assistant", reply, answering, { model, stats, ...(thinking ? { thinking } : {}) });
     } catch {
       // The chat was deleted while the reply was streaming: nothing to keep.
     }
@@ -139,16 +144,27 @@ export async function POST(request: Request) {
       const send = (event: ChatEvent) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       try {
         let last: ChatChunk | undefined;
+        let thinkingFrom: number | undefined; // when the first thought arrived, and when the reply itself began
+        let replyFrom: number | undefined;
         for await (const part of readNdjson<ChatChunk>(source)) {
           if (part.error) throw new Error(part.error);
+          const thought = part.message?.thinking;
+          if (thought) {
+            thinkingFrom ??= Date.now();
+            thinking += thought;
+            send({ type: "thinking", text: thought });
+          }
           const text = part.message?.content;
           if (text) {
+            replyFrom ??= Date.now();
             reply += text;
             send({ type: "delta", text });
           }
           if (part.done) last = part;
         }
-        const stats = last ? toStats(last, (await loadedContextLength(model)) ?? settings.contextLength) : undefined;
+        const endedAt = Date.now();
+        const timings = last ? toStats(last, (await loadedContextLength(model)) ?? settings.contextLength) : undefined;
+        const stats = timings && thinkingFrom !== undefined ? { ...timings, thinkingMs: (replyFrom ?? endedAt) - thinkingFrom } : timings;
         save(stats);
         send({ type: "done", stats });
         controller.close();

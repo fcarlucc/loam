@@ -2,10 +2,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { sleep, waitFor } from "../helpers/app.mjs";
-import { echo, FLAKY_ERROR } from "../helpers/fake-ollama.mjs";
+import { echo, FLAKY_ERROR, THINKING_PREFIX } from "../helpers/fake-ollama.mjs";
 import { chat, readEvents } from "../helpers/http.mjs";
 
 const MODEL = "fake:latest";
+const THINKER = "thinker:latest";
 const OLLAMA_DOWN = "Cannot reach Ollama. Is it running?";
 
 export function chatSuite(env) {
@@ -347,6 +348,66 @@ export function chatSuite(env) {
       assert.equal(msgs[1].parent_id, msgs[0].id);
       assert.equal(env.db.chat(r.id).model, MODEL, "the chat now uses the model that answered");
       await env.api.delete(`/api/chats/${r.id}`);
+    });
+
+    it("a reasoning model's thoughts stream apart from the reply, are kept apart and never go back", async () => {
+      const content = "Why is the sky blue?";
+      const r = await chat(env.api, { chatId: null, content, model: THINKER });
+      assert.equal(r.status, 200);
+      assert.equal(r.thinking, `${THINKING_PREFIX}${content}`);
+      assert.equal(r.text, echo([{ role: "user", content }]), "the reply holds none of the reasoning");
+      assert.ok(r.types.indexOf("thinking") < r.types.indexOf("delta"), "the thoughts come first");
+      assert.ok(Number.isInteger(r.stats.thinkingMs) && r.stats.thinkingMs >= 0, "time spent reasoning");
+      assert.equal(env.ollama.lastChat().body.think, undefined, "nothing asked: the model's own default");
+
+      const [, reply] = env.db.messages(r.id);
+      assert.equal(reply.thinking, r.thinking);
+      assert.equal(reply.content, r.text);
+      assert.equal((await branch(r.id))[1].thinking, r.thinking, "the page gets the reasoning back to show it");
+
+      // The next turn sends the conversation back without the reasoning.
+      const r2 = await chat(env.api, { chatId: r.id, content: "And at sunset?", model: THINKER });
+      assert.equal(r2.status, 200);
+      const sent = env.ollama.lastChat().body.messages;
+      assert.deepEqual(sent, [
+        { role: "user", content },
+        { role: "assistant", content: r.text },
+        { role: "user", content: "And at sunset?" },
+      ]);
+      assert.ok(!JSON.stringify(env.ollama.lastChat().body).includes(THINKING_PREFIX));
+      await env.api.delete(`/api/chats/${r.id}`);
+    });
+
+    it("the reasoning setting reaches Ollama only for models that can reason", async () => {
+      // Off: Ollama is told, and nothing is thought.
+      let r = await chat(env.api, { chatId: null, content: "quick", model: THINKER, settings: { think: false } });
+      assert.equal(r.status, 200);
+      assert.equal(env.ollama.lastChat().body.think, false);
+      assert.equal(r.thinking, "");
+      assert.ok(!r.types.includes("thinking"));
+      assert.equal(r.stats.thinkingMs, undefined);
+      assert.equal(env.db.messages(r.id)[1].thinking, null);
+      assert.equal(JSON.parse(env.db.chat(r.id).settings).think, false, "saved with the chat");
+      await env.api.delete(`/api/chats/${r.id}`);
+
+      // A level.
+      r = await chat(env.api, { chatId: null, content: "deep", model: THINKER, settings: { think: "low" } });
+      assert.equal(env.ollama.lastChat().body.think, "low");
+      assert.ok(r.types.includes("thinking"));
+      await env.api.delete(`/api/chats/${r.id}`);
+
+      // A model that can't reason never sees the setting (Ollama would refuse the request).
+      r = await chat(env.api, { chatId: null, content: "plain", model: MODEL, settings: { think: true } });
+      assert.equal(r.status, 200);
+      assert.equal(env.ollama.lastChat().body.think, undefined);
+      assert.equal(r.text, echo([{ role: "user", content: "plain" }]));
+      await env.api.delete(`/api/chats/${r.id}`);
+
+      for (const think of ["sometimes", 1, null, "LOW"]) {
+        const bad = await chat(env.api, { chatId: null, content: "x", model: THINKER, settings: { think } });
+        assert.equal(bad.status, 400, `think ${JSON.stringify(think)}`);
+        assert.equal(bad.error, "Invalid settings");
+      }
     });
 
     it("the branch on screen alternates user and assistant, and every parent belongs to the chat", async () => {

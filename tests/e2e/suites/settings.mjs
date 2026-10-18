@@ -16,7 +16,11 @@ export function settingsSuite(env) {
       assert.equal(res.status, 200);
       assert.deepEqual(res.data, { defaults: { system: "Hi", temperature: 0.56 }, keepAlive: 300 });
 
+      res = await env.api.json("/api/settings", { method: "PUT", body: { defaults: { think: "low" } } });
+      assert.deepEqual(res.data.defaults, { think: "low" }, "reasoning can be a default for new chats");
+
       for (const [name, body] of [
+        ["bad reasoning", { defaults: { think: "sometimes" } }],
         ["bad temperature", { defaults: { temperature: 3 } }],
         ["bad context", { defaults: { contextLength: 100 } }],
         ["unknown keep-alive", { keepAlive: 123 }],

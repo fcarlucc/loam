@@ -34,9 +34,31 @@ export async function loadedContextLength(model: string) {
   }
 }
 
+// Capabilities of a model (/api/show), remembered for a while: the chat route needs them on every
+// message of a chat that sets the reasoning.
+const capabilities = new Map<string, { at: number; list: string[] }>();
+export async function modelCapabilities(model: string): Promise<string[] | undefined> {
+  const hit = capabilities.get(model);
+  if (hit && Date.now() - hit.at < 5 * 60_000) return hit.list;
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return undefined;
+    const list = ((await res.json()) as { capabilities?: string[] }).capabilities ?? [];
+    capabilities.set(model, { at: Date.now(), list });
+    return list;
+  } catch {
+    return undefined;
+  }
+}
+
 // One line of Ollama's streamed /api/chat response.
 export type ChatChunk = {
-  message?: { content?: string };
+  message?: { content?: string; thinking?: string };
   error?: string;
   done?: boolean;
   eval_count?: number;

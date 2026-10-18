@@ -1,7 +1,10 @@
 export type Role = "user" | "assistant";
 
+// Reasoning, for models that can do it: off, on, or a level the model offers (see ModelInfo.thinking).
+export type ThinkValue = boolean | "low" | "medium" | "high" | "xhigh";
+
 // Per-chat generation settings. Unset fields use the model's own defaults.
-export type ChatSettings = { system?: string; temperature?: number; contextLength?: number };
+export type ChatSettings = { system?: string; temperature?: number; contextLength?: number; think?: ThinkValue };
 
 // Measured by Ollama for one reply.
 export type ReplyStats = {
@@ -12,6 +15,7 @@ export type ReplyStats = {
   totalMs: number;
   contextUsed: number; // promptTokens + tokens
   contextSize?: number; // the model's context window for this reply
+  thinkingMs?: number; // spent reasoning before the reply began, for models that reason
 };
 
 export type ChatSummary = {
@@ -26,11 +30,13 @@ export type ChatSummary = {
 export type Versions = { ids: number[]; index: number };
 
 // A message on the chat's active branch. `id` is missing until the server has saved it.
-export type ChatMessage = { id?: number; role: Role; content: string; stats?: ReplyStats; versions?: Versions };
+// `thinking` is what a reasoning model thought before the reply: shown, never sent back to the model.
+export type ChatMessage = { id?: number; role: Role; content: string; thinking?: string; stats?: ReplyStats; versions?: Versions };
 
 // Events streamed by /api/chat, one JSON object per line.
 export type ChatEvent =
   | { type: "delta"; text: string }
+  | { type: "thinking"; text: string }
   | { type: "done"; stats?: ReplyStats }
   | { type: "error"; message: string };
 
@@ -39,6 +45,8 @@ export type ModelInfo = {
   contextMax: number | null;
   temperature: number | null;
   capabilities: string[];
+  // What the model accepts for `think` and what it does when not told; null when it can't reason.
+  thinking?: { values: ThinkValue[]; default: ThinkValue } | null;
   family?: string | null;
   parameterSize?: string | null;
   quantization?: string | null;
