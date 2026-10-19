@@ -25,6 +25,7 @@ export type ChatSummary = {
   created_at: number;
   updated_at: number;
   settings: ChatSettings;
+  branch_of: number | null; // the chat this one was branched off, while it exists
 };
 // Other versions of the same message (edits of a user message, regenerations of a reply), oldest first.
 export type Versions = { ids: number[]; index: number };
@@ -39,6 +40,7 @@ export type NewAttachment = { name: string; type: string; kind: AttachmentKind; 
 
 // A message on the chat's active branch. `id` is missing until the server has saved it.
 // `thinking` is what a reasoning model thought before the reply: shown, never sent back to the model.
+// `copied` marks the messages a branched chat started with (copied from the chat it was branched off).
 export type ChatMessage = {
   id?: number;
   role: Role;
@@ -47,6 +49,7 @@ export type ChatMessage = {
   thinking?: string;
   stats?: ReplyStats;
   versions?: Versions;
+  copied?: boolean;
 };
 
 // Events streamed by /api/chat, one JSON object per line.

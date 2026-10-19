@@ -165,6 +165,14 @@ export function AppShell() {
     if (chatModel && models.includes(chatModel)) setModel(chatModel);
   };
 
+  // A chat branched off the one on screen: open it right away, then refresh the list from the server.
+  // The model picker stays as it is, so the branch can go on with another model.
+  const openBranch = (chat: ChatSummary) => {
+    setChats((list) => [chat, ...list.filter((c) => c.id !== chat.id)]);
+    setView((v) => ({ key: v.key + 1, id: chat.id }));
+    void refreshChats();
+  };
+
   const remove = async (id: number) => {
     // Leave the chat first, so a reply still streaming into it stops before it is deleted.
     if (id === view.id) open(null);
@@ -184,6 +192,9 @@ export function AppShell() {
     } catch {}
     await refreshChats();
   };
+
+  const current = chats.find((c) => c.id === view.id);
+  const branchOf = current?.branch_of != null ? chats.find((c) => c.id === current.branch_of) : undefined;
 
   const sidebar = (
     <Sidebar
@@ -247,7 +258,10 @@ export function AppShell() {
               initialSettings={defaults}
               modelInfo={modelInfo?.model === model ? modelInfo.info : null}
               onSaveDefaults={saveDefaults}
-              title={chats.find((c) => c.id === view.id)?.title ?? "New chat"}
+              title={current?.title ?? "New chat"}
+              branchOf={branchOf ? { id: branchOf.id, title: branchOf.title } : null}
+              onBranched={openBranch}
+              onOpenChat={open}
               draft={draft}
               onDraftChange={setDraft}
               ollamaRunning={running}

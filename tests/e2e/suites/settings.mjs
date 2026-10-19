@@ -89,7 +89,7 @@ export function settingsSuite(env) {
                   count(*) FILTER (WHERE role = 'user') AS sent,
                   count(*) FILTER (WHERE role = 'assistant') AS replies,
                   coalesce(sum(json_extract(stats, '$.tokens')), 0) AS tokens
-             FROM messages`,
+             FROM messages WHERE copied = 0`, // messages copied into a branched chat count once
         )
         .get();
       assert.equal(data.totals.chats, expected.chats);

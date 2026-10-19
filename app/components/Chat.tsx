@@ -1,15 +1,16 @@
 "use client";
 
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from "react";
+import { type Dispatch, Fragment, type SetStateAction, useEffect, useRef, useState } from "react";
 import { MAX_ATTACHMENTS } from "@/lib/attachments";
 import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
 import { hasCustomSettings } from "@/lib/settings";
-import type { ChatEvent, ChatMessage, ChatSettings as Settings, ModelInfo, NewAttachment, Versions } from "@/lib/types";
+import type { ChatEvent, ChatMessage, ChatSettings as Settings, ChatSummary, ModelInfo, NewAttachment, Versions } from "@/lib/types";
 import { acceptFor, AttachmentChips, metaOf, readFiles, textTokens } from "./Attachments";
 import { CopyButton } from "./CopyButton";
 import {
+  BranchIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   MenuIcon,
@@ -63,6 +64,9 @@ export function Chat({
   modelInfo,
   onSaveDefaults,
   title,
+  branchOf,
+  onBranched,
+  onOpenChat,
   draft,
   onDraftChange,
   ollamaRunning,
@@ -82,6 +86,9 @@ export function Chat({
   modelInfo: ModelInfo | null;
   onSaveDefaults: (settings: Settings) => Promise<boolean>;
   title: string;
+  branchOf: { id: number; title: string } | null;
+  onBranched: (chat: ChatSummary) => void;
+  onOpenChat: (id: number) => void;
   draft: string;
   onDraftChange: Dispatch<SetStateAction<string>>;
   ollamaRunning: boolean;
@@ -103,6 +110,7 @@ export function Chat({
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<Settings>(initialSettings);
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
+  const [branching, setBranching] = useState(false);
   // A message opened from search: scrolled into view and highlighted for a moment.
   const [highlight, setHighlight] = useState<number | null>(focusMessageId);
   // Files waiting in the composer, what was wrong with the last ones added, and whether files hover over the chat.
@@ -222,6 +230,8 @@ export function Chat({
   const ready = ollamaRunning && !!model && !streaming && !loading;
   const last = messages.at(-1);
   const canRetry = !streaming && chatId !== null && last?.role === "user";
+  // In a branched chat, the last message copied from the chat it came from (-1 elsewhere).
+  const branchPoint = messages.findLastIndex((m) => m.copied);
 
   function sendDraft() {
     const content = draft.trim();
@@ -273,6 +283,26 @@ export function Chat({
       });
       if (res.ok) setMessages((await res.json()).messages as ChatMessage[]);
     } catch {}
+  }
+
+  // Copies the branch up to this message into a new chat, which then opens; this chat stays as it is.
+  async function branchFrom(messageId: number) {
+    if (chatId === null || streaming || branching) return;
+    setBranching(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/chats/${chatId}/branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId, settings }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't branch this chat");
+      onBranched(data.chat as ChatSummary);
+    } catch (e) {
+      setError(describeError(e, false));
+      setBranching(false);
+    }
   }
 
   // Once the server has the chat it stops the reply itself, saves what was written and ends the stream,
@@ -479,80 +509,99 @@ export function Chat({
               {messages.map((m, i) => {
                 const isLast = i === messages.length - 1;
                 const key = m.id ?? `pending-${i}`;
+                const note = i === branchPoint && <BranchNote from={branchOf} onOpen={onOpenChat} />;
                 if (m.role === "user") {
                   if (editing && m.id === editing.id) {
                     return (
-                      <EditMessage
-                        key={key}
-                        initial={editing.text}
-                        disabled={!ready}
-                        onCancel={() => setEditing(null)}
-                        onSubmit={(text) => void run({ kind: "edit", id: editing.id, content: text })}
-                      />
+                      <Fragment key={key}>
+                        <EditMessage
+                          initial={editing.text}
+                          disabled={!ready}
+                          onCancel={() => setEditing(null)}
+                          onSubmit={(text) => void run({ kind: "edit", id: editing.id, content: text })}
+                        />
+                        {note}
+                      </Fragment>
                     );
                   }
                   return (
-                    <div key={key} data-message-id={m.id} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
-                      {m.content && (
-                        <div
-                          className={`whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg transition-shadow ${
-                            highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""
-                          }`}
-                        >
-                          {m.content}
-                        </div>
-                      )}
-                      {m.attachments && <AttachmentChips items={m.attachments} className="justify-end" />}
-                      {m.id !== undefined && !streaming && (
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => setEditing({ id: m.id!, text: m.content })}
-                            className={`${actionClass} opacity-0 focus-visible:opacity-100 group-hover/msg:opacity-100`}
+                    <Fragment key={key}>
+                      <div data-message-id={m.id} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
+                        {m.content && (
+                          <div
+                            className={`whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg transition-shadow ${
+                              highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""
+                            }`}
                           >
-                            <PencilIcon width={14} height={14} />
-                            Edit
-                          </button>
-                          {m.versions && <VersionNav versions={m.versions} onSelect={showVersion} />}
-                        </div>
-                      )}
-                    </div>
+                            {m.content}
+                          </div>
+                        )}
+                        {m.attachments && <AttachmentChips items={m.attachments} className="justify-end" />}
+                        {m.id !== undefined && !streaming && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setEditing({ id: m.id!, text: m.content })}
+                              className={`${actionClass} opacity-0 focus-visible:opacity-100 group-hover/msg:opacity-100`}
+                            >
+                              <PencilIcon width={14} height={14} />
+                              Edit
+                            </button>
+                            {m.versions && <VersionNav versions={m.versions} onSelect={showVersion} />}
+                          </div>
+                        )}
+                      </div>
+                      {note}
+                    </Fragment>
                   );
                 }
                 return (
-                  <div
-                    key={key}
-                    data-message-id={m.id}
-                    className={`group/msg max-w-[95%] rounded-xl transition-shadow ${
-                      highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""
-                    }`}
-                  >
-                    {m.thinking && <Reasoning text={m.thinking} live={streaming && isLast && !m.content} ms={m.stats?.thinkingMs} />}
-                    {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && !m.thinking && <TypingDots />}
-                    {m.content && !(streaming && isLast) && (
-                      // The latest reply, and replies with versions, always show their actions; others on hover or focus.
-                      <div
-                        className={`mt-1 flex flex-wrap items-center gap-1 transition-opacity ${
-                          isLast || m.versions ? "" : "opacity-0 focus-within:opacity-100 group-hover/msg:opacity-100"
-                        }`}
-                      >
-                        {m.versions && <VersionNav versions={m.versions} disabled={streaming} onSelect={showVersion} />}
-                        <CopyButton text={m.content} label="Copy" />
-                        {isLast && m.id !== undefined && (
-                          <button onClick={() => void run({ kind: "regenerate", id: m.id! })} disabled={!ready} className={actionClass}>
-                            <RefreshIcon width={14} height={14} />
-                            Regenerate
-                          </button>
-                        )}
-                        {m.stats && <StatsLine stats={m.stats} />}
-                      </div>
-                    )}
-                    {isLast && !streaming && nearlyFull(m.stats) && (
-                      <p className="mt-1 px-1.5 text-xs text-danger">
-                        This chat is close to the model&apos;s context limit: the oldest messages will be left out. Start a new chat,
-                        or raise the context length in the chat settings if the model allows it.
-                      </p>
-                    )}
-                  </div>
+                  <Fragment key={key}>
+                    <div
+                      data-message-id={m.id}
+                      className={`group/msg max-w-[95%] rounded-xl transition-shadow ${
+                        highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""
+                      }`}
+                    >
+                      {m.thinking && <Reasoning text={m.thinking} live={streaming && isLast && !m.content} ms={m.stats?.thinkingMs} />}
+                      {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && !m.thinking && <TypingDots />}
+                      {m.content && !(streaming && isLast) && (
+                        // The latest reply, and replies with versions, always show their actions; others on hover or focus.
+                        <div
+                          className={`mt-1 flex flex-wrap items-center gap-1 transition-opacity ${
+                            isLast || m.versions ? "" : "opacity-0 focus-within:opacity-100 group-hover/msg:opacity-100"
+                          }`}
+                        >
+                          {m.versions && <VersionNav versions={m.versions} disabled={streaming} onSelect={showVersion} />}
+                          <CopyButton text={m.content} label="Copy" />
+                          {isLast && m.id !== undefined && (
+                            <button onClick={() => void run({ kind: "regenerate", id: m.id! })} disabled={!ready} className={actionClass}>
+                              <RefreshIcon width={14} height={14} />
+                              Regenerate
+                            </button>
+                          )}
+                          {m.id !== undefined && !streaming && (
+                            <button
+                              onClick={() => void branchFrom(m.id!)}
+                              disabled={branching}
+                              title="Continue from here in a new chat"
+                              className={actionClass}
+                            >
+                              <BranchIcon width={14} height={14} />
+                              Branch
+                            </button>
+                          )}
+                          {m.stats && <StatsLine stats={m.stats} />}
+                        </div>
+                      )}
+                      {isLast && !streaming && nearlyFull(m.stats) && (
+                        <p className="mt-1 px-1.5 text-xs text-danger">
+                          This chat is close to the model&apos;s context limit: the oldest messages will be left out. Start a new chat,
+                          or raise the context length in the chat settings if the model allows it.
+                        </p>
+                      )}
+                    </div>
+                    {note}
+                  </Fragment>
                 );
               })}
               {(error || canRetry) && (
@@ -693,6 +742,27 @@ export function Chat({
         onSaveDefaults={() => onSaveDefaults(settings)}
         onClose={closeSettings}
       />
+    </div>
+  );
+}
+
+// Where a branched chat's copied messages end, with a way back to the chat they came from.
+function BranchNote({ from, onOpen }: { from: { id: number; title: string } | null; onOpen: (id: number) => void }) {
+  return (
+    <div className="flex items-center gap-3 text-xs text-muted">
+      <span aria-hidden className="h-px flex-1 bg-border" />
+      <BranchIcon width={14} height={14} />
+      {from ? (
+        <span className="flex min-w-0 max-w-[75%] gap-1">
+          <span className="shrink-0">Branched from</span>
+          <button onClick={() => onOpen(from.id)} className="min-w-0 truncate underline-offset-2 hover:text-fg hover:underline">
+            {from.title}
+          </button>
+        </span>
+      ) : (
+        <span>Branched from another chat</span>
+      )}
+      <span aria-hidden className="h-px flex-1 bg-border" />
     </div>
   );
 }

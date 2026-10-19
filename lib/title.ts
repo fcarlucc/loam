@@ -40,3 +40,10 @@ export function cleanTitle(raw: string) {
     .replace(/\s+/g, " ");
   return cut(title, 60);
 }
+
+const BRANCH_PREFIX = "Branch · ";
+
+// The title of a chat branched off another one; a branch of a branch doesn't stack prefixes.
+export function branchTitle(title: string) {
+  return title.startsWith(BRANCH_PREFIX) ? title : cut(BRANCH_PREFIX + title, 120);
+}

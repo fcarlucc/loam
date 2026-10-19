@@ -100,3 +100,6 @@ export const PaperclipIcon = (p: SVGProps<SVGSVGElement>) => (
 export const FileIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></svg>
 );
+export const BranchIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M6 3v12" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg>
+);

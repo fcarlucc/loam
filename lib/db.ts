@@ -113,6 +113,12 @@ function migrate(conn: DatabaseSync) {
   }
   conn.exec("CREATE INDEX IF NOT EXISTS messages_parent_idx ON messages(parent_id)");
 
+  // A chat can be branched off another one (see branchChat): it starts with a copy of the branch it came
+  // from. branch_of is that chat, cleared when it is deleted; copied marks the copied messages, so usage
+  // counts each reply once, in the chat where it was written.
+  addColumn(conn, "chats", "branch_of", "INTEGER REFERENCES chats(id) ON DELETE SET NULL");
+  addColumn(conn, "messages", "copied", "INTEGER NOT NULL DEFAULT 0");
+
   // Files attached to user messages, kept with the chat and deleted with it. Text files keep their text,
   // images their bytes (already resized by the page). Not part of the search index.
   conn.exec(`
@@ -177,9 +183,17 @@ function parseJson(text: unknown): unknown {
 }
 
 type ChatRow = Omit<ChatSummary, "settings"> & { settings: string | null };
-type MessageRow = { id: number; parent_id: number | null; role: Role; content: string; stats: string | null; thinking: string | null };
+type MessageRow = {
+  id: number;
+  parent_id: number | null;
+  role: Role;
+  content: string;
+  stats: string | null;
+  thinking: string | null;
+  copied: number;
+};
 
-const CHAT_COLUMNS = "id, title, model, settings, created_at, updated_at";
+const CHAT_COLUMNS = "id, title, model, settings, branch_of, created_at, updated_at";
 const toChat = ({ settings, ...row }: ChatRow): ChatSummary => ({ ...row, settings: parseSettings(parseJson(settings)) ?? {} });
 
 export function transaction<T>(fn: () => T): T {
@@ -230,7 +244,7 @@ export function deleteChat(id: number) {
 
 function messageRows(chatId: number) {
   return db()
-    .prepare("SELECT id, parent_id, role, content, stats, thinking FROM messages WHERE chat_id = ? ORDER BY id")
+    .prepare("SELECT id, parent_id, role, content, stats, thinking, copied FROM messages WHERE chat_id = ? ORDER BY id")
     .all(chatId) as MessageRow[];
 }
 
@@ -270,6 +284,7 @@ export function getPath(chatId: number, leafId: number | null = getLeafId(chatId
       ...(row.thinking ? { thinking: row.thinking } : {}),
       ...(stats ? { stats } : {}),
       ...(ids.length > 1 ? { versions: { ids, index: ids.indexOf(row.id) } } : {}),
+      ...(row.copied ? { copied: true } : {}),
     });
   }
   return path;
@@ -349,6 +364,52 @@ export function getAttachment(id: number) {
     | undefined;
 }
 
+// Starts a new chat from the branch ending at `messageId`, so the conversation can go on there in another
+// direction while this chat stays as it is. Only that branch is copied, without the other versions of its
+// messages. Messages, files, reasoning and stats are copies, not shared rows, so deleting either chat leaves
+// the other whole. Returns the new chat's id.
+export function branchChat(chatId: number, messageId: number, title: string, settings: ChatSettings) {
+  return transaction(() => {
+    // Walks up from the message to the first one; a parent always has a smaller id than its replies.
+    const rows = db()
+      .prepare(
+        `WITH RECURSIVE branch(id) AS (
+           SELECT id FROM messages WHERE id = ? AND chat_id = ?
+           UNION ALL
+           SELECT m.parent_id FROM messages m JOIN branch b ON m.id = b.id WHERE m.parent_id IS NOT NULL
+         )
+         SELECT m.id, m.role, m.content, m.model, m.stats, m.thinking, m.created_at
+           FROM messages m JOIN branch USING (id) ORDER BY m.id`,
+      )
+      .all(messageId, chatId) as (Pick<MessageRow, "id" | "role" | "content" | "stats" | "thinking"> & {
+      model: string | null;
+      created_at: number;
+    })[];
+    if (!rows.length) throw new Error("Message not found");
+
+    const now = Date.now();
+    const { lastInsertRowid } = db()
+      .prepare(
+        `INSERT INTO chats (title, model, settings, branch_of, created_at, updated_at)
+         SELECT ?, model, ?, id, ?, ? FROM chats WHERE id = ?`,
+      )
+      .run(title, JSON.stringify(settings), now, now, chatId);
+    const branchId = Number(lastInsertRowid);
+    const insert = db().prepare(
+      `INSERT INTO messages (chat_id, parent_id, role, content, model, stats, thinking, created_at, copied)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    );
+    let parent: number | null = null;
+    for (const m of rows) {
+      const copy: number = Number(insert.run(branchId, parent, m.role, m.content, m.model, m.stats, m.thinking, m.created_at).lastInsertRowid);
+      copyAttachments(m.id, copy);
+      parent = copy;
+    }
+    db().prepare("UPDATE chats SET leaf_id = ? WHERE id = ?").run(parent, branchId);
+    return branchId;
+  });
+}
+
 // Shows another version of a message: the branch continues with its newest follow-ups.
 // Browsing versions doesn't count as activity, so the chat keeps its place in the sidebar.
 export function selectVersion(chatId: number, messageId: number) {
@@ -414,7 +475,8 @@ export const getKeepAlive = (): number => {
 };
 export const setKeepAlive = (seconds: number) => setAppSetting("keep_alive", seconds);
 
-// Usage overview: totals, replies per day (last 30 days, local time) and per model.
+// Usage overview: totals, replies per day (last 30 days, local time) and per model. Messages copied into a
+// branched chat were counted where they were written.
 export function getUsage(): Usage {
   const since = Date.now() - 30 * 24 * 3600 * 1000;
   const totals = db()
@@ -424,14 +486,14 @@ export function getUsage(): Usage {
               count(*) FILTER (WHERE role = 'assistant') AS replies,
               coalesce(sum(json_extract(stats, '$.tokens')), 0) AS tokens,
               coalesce(sum(json_extract(stats, '$.totalMs')), 0) AS generatingMs
-         FROM messages`,
+         FROM messages WHERE copied = 0`,
     )
     .get() as Usage["totals"];
   const daily = db()
     .prepare(
       `SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS day, count(*) AS replies,
               coalesce(sum(json_extract(stats, '$.tokens')), 0) AS tokens
-         FROM messages WHERE role = 'assistant' AND created_at >= ?
+         FROM messages WHERE role = 'assistant' AND copied = 0 AND created_at >= ?
         GROUP BY day ORDER BY day`,
     )
     .all(since) as Usage["daily"];
@@ -443,7 +505,7 @@ export function getUsage(): Usage {
               avg(json_extract(stats, '$.tokensPerSecond')) AS avgTokensPerSecond,
               count(*) FILTER (WHERE json_extract(stats, '$.loadMs') > 1000) AS coldStarts,
               avg(json_extract(stats, '$.loadMs')) FILTER (WHERE json_extract(stats, '$.loadMs') > 1000) AS avgColdLoadMs
-         FROM messages WHERE role = 'assistant' AND model IS NOT NULL
+         FROM messages WHERE role = 'assistant' AND copied = 0 AND model IS NOT NULL
         GROUP BY model ORDER BY replies DESC`,
     )
     .all() as Usage["models"];
