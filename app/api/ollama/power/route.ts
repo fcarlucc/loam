@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
+import { resolveOllama } from "@/lib/engines";
 import { jsonError, readJson } from "@/lib/http";
-import { getStatus } from "@/lib/ollama";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -15,26 +15,25 @@ function brew(action: "start" | "stop") {
   });
 }
 
-async function waitFor(running: boolean, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if ((await getStatus()).running === running) return true;
-    await sleep(400);
-  }
-  return false;
-}
-
+// Starts or stops Homebrew's Ollama service, then waits until the engine answers (or stops answering).
 export async function POST(request: Request) {
-  const { action } = await readJson(request);
+  const body = await readJson(request);
+  const { action } = body;
   if (action !== "start" && action !== "stop") return jsonError("Invalid action", 400);
+  const engine = resolveOllama(body.engine);
+  if (engine instanceof Response) return engine;
+  if (!engine.supports.power) return jsonError(`${engine.config.name} can't be started or stopped from here`, 400);
 
   try {
     await brew(action);
   } catch (e) {
     return jsonError(e instanceof Error ? e.message : "Something went wrong", 500);
   }
-  if (!(await waitFor(action === "start", action === "start" ? 20000 : 8000))) {
-    return jsonError(action === "start" ? "Ollama didn't start within 20 seconds" : "Ollama didn't stop within 8 seconds", 504);
+  const running = action === "start";
+  const deadline = Date.now() + (running ? 20000 : 8000);
+  while (Date.now() < deadline) {
+    if ((await engine.status()).running === running) return Response.json(await engine.status());
+    await sleep(400);
   }
-  return Response.json(await getStatus());
+  return jsonError(running ? "Ollama didn't start within 20 seconds" : "Ollama didn't stop within 8 seconds", 504);
 }

@@ -6,7 +6,7 @@ export type ThinkValue = boolean | "low" | "medium" | "high" | "xhigh";
 // Per-chat generation settings. Unset fields use the model's own defaults.
 export type ChatSettings = { system?: string; temperature?: number; contextLength?: number; think?: ThinkValue };
 
-// Measured by Ollama for one reply.
+// Measured by the engine for one reply.
 export type ReplyStats = {
   tokens: number; // generated
   tokensPerSecond: number;
@@ -18,9 +18,18 @@ export type ReplyStats = {
   thinkingMs?: number; // spent reasoning before the reply began, for models that reason
 };
 
+// A local AI engine the app talks to: Ollama through its own API, or any server speaking the OpenAI chat API
+// (LM Studio, llama.cpp, MLX). `builtin` is the Ollama every install starts with; `remote` marks an engine on
+// another machine, accepted only with ALLOW_REMOTE_ENGINES=1.
+export type EngineKind = "ollama" | "openai";
+export type EngineConfig = { id: string; name: string; kind: EngineKind; baseUrl: string; builtin: boolean; remote: boolean };
+// An engine as the model picker sees it: whether it answers right now, and its models.
+export type EngineModels = EngineConfig & { online: boolean; models: string[]; error?: string };
+
 export type ChatSummary = {
   id: number;
   title: string;
+  engine: string; // id of the engine the chat was last continued with (see EngineConfig)
   model: string;
   created_at: number;
   updated_at: number;
@@ -30,8 +39,8 @@ export type ChatSummary = {
 // Other versions of the same message (edits of a user message, regenerations of a reply), oldest first.
 export type Versions = { ids: number[]; index: number };
 
-// A file attached to a user message. Text files go to the model inside the message; images go through
-// Ollama's `images`, to models that can see. `id` is missing until the server has saved the message.
+// A file attached to a user message. Text files go to the model inside the message; images go to the engine
+// as images, to models that can see. `id` is missing until the server has saved the message.
 export type AttachmentKind = "text" | "image";
 // `preview` (page only) shows an image while its message is still being sent: a data URL, never saved.
 export type Attachment = { id?: number; name: string; type: string; size: number; kind: AttachmentKind; preview?: string };
@@ -59,11 +68,12 @@ export type ChatEvent =
   | { type: "done"; stats?: ReplyStats }
   | { type: "error"; message: string };
 
-// What the settings and models panels need to know about a model (from /api/ollama/show).
+// What the settings and models panels need to know about a model (from /api/engines/[id]/show).
+// Most of it is only known for Ollama models; `capabilities` is null when the engine can't tell.
 export type ModelInfo = {
   contextMax: number | null;
   temperature: number | null;
-  capabilities: string[];
+  capabilities: string[] | null;
   // What the model accepts for `think` and what it does when not told; null when it can't reason.
   thinking?: { values: ThinkValue[]; default: ThinkValue } | null;
   family?: string | null;
@@ -74,8 +84,8 @@ export type ModelInfo = {
 
 export type InstalledModel = {
   name: string;
-  bytes: number; // on disk
-  modifiedAt: string;
+  bytes: number | null; // on disk, when the engine says
+  modifiedAt: string | null;
   parameterSize: string | null;
   quantization: string | null;
 };
@@ -104,6 +114,7 @@ export type Usage = {
   totals: { chats: number; sent: number; replies: number; tokens: number; generatingMs: number };
   daily: { day: string; replies: number; tokens: number }[]; // only days with replies, "YYYY-MM-DD"
   models: {
+    engine: string;
     model: string;
     replies: number;
     tokens: number;
@@ -115,6 +126,7 @@ export type Usage = {
 
 export type BenchmarkResult = {
   id: number;
+  engine: string;
   model: string;
   createdAt: number;
   cold: boolean; // model unloaded first, so loadMs is a real cold start

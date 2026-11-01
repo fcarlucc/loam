@@ -8,6 +8,7 @@ import type {
   ChatMessage,
   ChatSettings,
   ChatSummary,
+  EngineKind,
   NewAttachment,
   ReplyStats,
   Role,
@@ -162,6 +163,34 @@ function migrate(conn: DatabaseSync) {
     conn.exec("ROLLBACK");
     throw e;
   }
+
+  // The engines the user added (see lib/engines): Ollama through its own API, or an OpenAI-compatible server.
+  // The built-in Ollama has no row unless it was edited (then its row carries the same id, "ollama").
+  conn.exec(`
+    CREATE TABLE IF NOT EXISTS engines (
+      id         TEXT    PRIMARY KEY,
+      name       TEXT    NOT NULL,
+      kind       TEXT    NOT NULL CHECK (kind IN ('ollama', 'openai')),
+      base_url   TEXT    NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+  `);
+  // Which engine a chat was last continued with, and which one wrote each reply. Everything saved before
+  // engines existed came from Ollama, the only engine there was: the column default says so, and replies
+  // are backfilled in the same transaction as the column, so nothing is left half-migrated.
+  addColumn(conn, "chats", "engine", "TEXT NOT NULL DEFAULT 'ollama'");
+  if (!hasColumn(conn, "messages", "engine")) {
+    conn.exec("BEGIN");
+    try {
+      conn.exec("ALTER TABLE messages ADD COLUMN engine TEXT");
+      conn.exec("UPDATE messages SET engine = 'ollama' WHERE role = 'assistant'");
+      conn.exec("COMMIT");
+    } catch (e) {
+      conn.exec("ROLLBACK");
+      throw e;
+    }
+  }
+  addColumn(conn, "benchmarks", "engine", "TEXT NOT NULL DEFAULT 'ollama'");
 }
 
 function hasColumn(conn: DatabaseSync, table: string, column: string) {
@@ -193,7 +222,7 @@ type MessageRow = {
   copied: number;
 };
 
-const CHAT_COLUMNS = "id, title, model, settings, branch_of, created_at, updated_at";
+const CHAT_COLUMNS = "id, title, engine, model, settings, branch_of, created_at, updated_at";
 const toChat = ({ settings, ...row }: ChatRow): ChatSummary => ({ ...row, settings: parseSettings(parseJson(settings)) ?? {} });
 
 export function transaction<T>(fn: () => T): T {
@@ -217,16 +246,17 @@ export function getChat(id: number) {
   return row && toChat(row);
 }
 
-export function createChat(title: string, model: string, settings: ChatSettings) {
+export function createChat(title: string, engine: string, model: string, settings: ChatSettings) {
   const now = Date.now();
   const { lastInsertRowid } = db()
-    .prepare("INSERT INTO chats (title, model, settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-    .run(title, model, JSON.stringify(settings), now, now);
+    .prepare("INSERT INTO chats (title, engine, model, settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(title, engine, model, JSON.stringify(settings), now, now);
   return Number(lastInsertRowid);
 }
 
-export function updateChat(id: number, fields: { title?: string; model?: string; settings?: ChatSettings }) {
+export function updateChat(id: number, fields: { title?: string; engine?: string; model?: string; settings?: ChatSettings }) {
   if (fields.title !== undefined) db().prepare("UPDATE chats SET title = ? WHERE id = ?").run(fields.title, id);
+  if (fields.engine !== undefined) db().prepare("UPDATE chats SET engine = ? WHERE id = ?").run(fields.engine, id);
   if (fields.model !== undefined) db().prepare("UPDATE chats SET model = ? WHERE id = ?").run(fields.model, id);
   if (fields.settings !== undefined) {
     db().prepare("UPDATE chats SET settings = ? WHERE id = ?").run(JSON.stringify(fields.settings), id);
@@ -296,12 +326,24 @@ export function addMessage(
   role: Role,
   content: string,
   parentId: number | null,
-  reply?: { model: string; stats?: ReplyStats; thinking?: string },
+  reply?: { engine: string; model: string; stats?: ReplyStats; thinking?: string },
 ) {
   const now = Date.now();
   const { lastInsertRowid } = db()
-    .prepare("INSERT INTO messages (chat_id, parent_id, role, content, model, stats, thinking, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run(chatId, parentId, role, content, reply?.model ?? null, reply?.stats ? JSON.stringify(reply.stats) : null, reply?.thinking ?? null, now);
+    .prepare(
+      "INSERT INTO messages (chat_id, parent_id, role, content, engine, model, stats, thinking, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      chatId,
+      parentId,
+      role,
+      content,
+      reply?.engine ?? null,
+      reply?.model ?? null,
+      reply?.stats ? JSON.stringify(reply.stats) : null,
+      reply?.thinking ?? null,
+      now,
+    );
   const id = Number(lastInsertRowid);
   db().prepare("UPDATE chats SET updated_at = ?, leaf_id = ? WHERE id = ?").run(now, id, chatId);
   return id;
@@ -347,14 +389,14 @@ function attachmentsOf(chatId: number) {
   return byMessage;
 }
 
-// What goes to the model for one message: text files, and images as base64.
+// What goes to the model for one message: text files, and images as base64 with their MIME type.
 export function attachmentContents(messageId: number) {
   const rows = db()
-    .prepare("SELECT name, kind, text, data FROM attachments WHERE message_id = ? ORDER BY id")
-    .all(messageId) as { name: string; kind: Attachment["kind"]; text: string | null; data: Uint8Array | null }[];
+    .prepare("SELECT name, type, kind, text, data FROM attachments WHERE message_id = ? ORDER BY id")
+    .all(messageId) as { name: string; type: string; kind: Attachment["kind"]; text: string | null; data: Uint8Array | null }[];
   return {
     files: rows.filter((r) => r.kind === "text").map((r) => ({ name: r.name, text: r.text ?? "" })),
-    images: rows.filter((r) => r.kind === "image").map((r) => Buffer.from(r.data ?? new Uint8Array()).toString("base64")),
+    images: rows.filter((r) => r.kind === "image").map((r) => ({ data: Buffer.from(r.data ?? new Uint8Array()).toString("base64"), type: r.type })),
   };
 }
 
@@ -378,10 +420,11 @@ export function branchChat(chatId: number, messageId: number, title: string, set
            UNION ALL
            SELECT m.parent_id FROM messages m JOIN branch b ON m.id = b.id WHERE m.parent_id IS NOT NULL
          )
-         SELECT m.id, m.role, m.content, m.model, m.stats, m.thinking, m.created_at
+         SELECT m.id, m.role, m.content, m.engine, m.model, m.stats, m.thinking, m.created_at
            FROM messages m JOIN branch USING (id) ORDER BY m.id`,
       )
       .all(messageId, chatId) as (Pick<MessageRow, "id" | "role" | "content" | "stats" | "thinking"> & {
+      engine: string | null;
       model: string | null;
       created_at: number;
     })[];
@@ -390,18 +433,20 @@ export function branchChat(chatId: number, messageId: number, title: string, set
     const now = Date.now();
     const { lastInsertRowid } = db()
       .prepare(
-        `INSERT INTO chats (title, model, settings, branch_of, created_at, updated_at)
-         SELECT ?, model, ?, id, ?, ? FROM chats WHERE id = ?`,
+        `INSERT INTO chats (title, engine, model, settings, branch_of, created_at, updated_at)
+         SELECT ?, engine, model, ?, id, ?, ? FROM chats WHERE id = ?`,
       )
       .run(title, JSON.stringify(settings), now, now, chatId);
     const branchId = Number(lastInsertRowid);
     const insert = db().prepare(
-      `INSERT INTO messages (chat_id, parent_id, role, content, model, stats, thinking, created_at, copied)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      `INSERT INTO messages (chat_id, parent_id, role, content, engine, model, stats, thinking, created_at, copied)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     );
     let parent: number | null = null;
     for (const m of rows) {
-      const copy: number = Number(insert.run(branchId, parent, m.role, m.content, m.model, m.stats, m.thinking, m.created_at).lastInsertRowid);
+      const copy: number = Number(
+        insert.run(branchId, parent, m.role, m.content, m.engine, m.model, m.stats, m.thinking, m.created_at).lastInsertRowid,
+      );
       copyAttachments(m.id, copy);
       parent = copy;
     }
@@ -500,13 +545,13 @@ export function getUsage(): Usage {
   // A reply that spent over a second loading the model counts as a cold start.
   const models = db()
     .prepare(
-      `SELECT model, count(*) AS replies,
+      `SELECT coalesce(engine, 'ollama') AS engine, model, count(*) AS replies,
               coalesce(sum(json_extract(stats, '$.tokens')), 0) AS tokens,
               avg(json_extract(stats, '$.tokensPerSecond')) AS avgTokensPerSecond,
               count(*) FILTER (WHERE json_extract(stats, '$.loadMs') > 1000) AS coldStarts,
               avg(json_extract(stats, '$.loadMs')) FILTER (WHERE json_extract(stats, '$.loadMs') > 1000) AS avgColdLoadMs
          FROM messages WHERE role = 'assistant' AND copied = 0 AND model IS NOT NULL
-        GROUP BY model ORDER BY replies DESC`,
+        GROUP BY engine, model ORDER BY replies DESC`,
     )
     .all() as Usage["models"];
   return { totals, daily, models };
@@ -515,16 +560,16 @@ export function getUsage(): Usage {
 export function addBenchmark(r: Omit<BenchmarkResult, "id" | "createdAt">) {
   db()
     .prepare(
-      `INSERT INTO benchmarks (model, created_at, cold, tokens, tokens_per_second, prompt_per_second, load_ms, total_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO benchmarks (engine, model, created_at, cold, tokens, tokens_per_second, prompt_per_second, load_ms, total_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(r.model, Date.now(), r.cold ? 1 : 0, r.tokens, r.tokensPerSecond, r.promptPerSecond, r.loadMs, r.totalMs);
+    .run(r.engine, r.model, Date.now(), r.cold ? 1 : 0, r.tokens, r.tokensPerSecond, r.promptPerSecond, r.loadMs, r.totalMs);
 }
 
 export function listBenchmarks(limit = 50): BenchmarkResult[] {
   const rows = db()
     .prepare(
-      `SELECT id, model, created_at AS createdAt, cold, tokens, tokens_per_second AS tokensPerSecond,
+      `SELECT id, engine, model, created_at AS createdAt, cold, tokens, tokens_per_second AS tokensPerSecond,
               prompt_per_second AS promptPerSecond, load_ms AS loadMs, total_ms AS totalMs
          FROM benchmarks ORDER BY id DESC LIMIT ?`,
     )
@@ -534,4 +579,29 @@ export function listBenchmarks(limit = 50): BenchmarkResult[] {
 
 export function clearBenchmarks() {
   db().exec("DELETE FROM benchmarks");
+}
+
+// The engines the user added or edited (the built-in Ollama is assembled in lib/engines from these rows).
+export type EngineRow = { id: string; name: string; kind: EngineKind; base_url: string; created_at: number };
+
+export function listEngineRows(): EngineRow[] {
+  return db().prepare("SELECT id, name, kind, base_url, created_at FROM engines ORDER BY created_at, id").all() as EngineRow[];
+}
+
+export function getEngineRow(id: string): EngineRow | undefined {
+  return db().prepare("SELECT id, name, kind, base_url, created_at FROM engines WHERE id = ?").get(id) as EngineRow | undefined;
+}
+
+// Inserts the engine, or updates its name and URL when a row with this id exists (editing the built-in Ollama).
+export function saveEngineRow(row: Omit<EngineRow, "created_at">) {
+  db()
+    .prepare(
+      `INSERT INTO engines (id, name, kind, base_url, created_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind, base_url = excluded.base_url`,
+    )
+    .run(row.id, row.name, row.kind, row.base_url, Date.now());
+}
+
+export function deleteEngineRow(id: string) {
+  db().prepare("DELETE FROM engines WHERE id = ?").run(id);
 }

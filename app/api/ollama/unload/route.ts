@@ -1,21 +1,18 @@
 import { isValidModelName } from "@/lib/catalog";
+import { engineFailure, resolveOllama } from "@/lib/engines";
 import { jsonError, readJson } from "@/lib/http";
-import { OLLAMA_URL, ollamaError } from "@/lib/ollama";
 
 // Frees the memory a model uses, without stopping Ollama.
 export async function POST(request: Request) {
-  const { model } = await readJson(request);
+  const body = await readJson(request);
+  const { model } = body;
   if (typeof model !== "string" || !isValidModelName(model)) return jsonError("Invalid model name", 400);
+  const engine = resolveOllama(body.engine);
+  if (engine instanceof Response) return engine;
   try {
-    const res = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, keep_alive: 0 }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return jsonError(await ollamaError(res), 502);
-  } catch {
-    return jsonError("Cannot reach Ollama. Is it running?", 502);
+    await engine.unload!(model);
+  } catch (e) {
+    return engineFailure(e);
   }
   return Response.json({ ok: true });
 }
