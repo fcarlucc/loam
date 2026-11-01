@@ -234,7 +234,7 @@ export function EnginesDialog({ engines, onClose, onChanged }: { engines: Engine
                       <div className="min-w-0 flex-1">
                         <p className="flex items-center gap-2 text-sm font-medium">
                           <span className="truncate">{engine.name}</span>
-                          <span className="shrink-0 text-xs font-normal text-muted">{KIND_LABEL[engine.kind]}</span>
+                          <span className="shrink-0 text-xs font-normal text-muted">{engine.builtin ? "Built in" : KIND_LABEL[engine.kind]}</span>
                           {engine.remote && (
                             <span className="shrink-0 rounded bg-danger/15 px-1 text-xs font-normal text-danger" title="On another machine: your messages leave this computer">
                               Remote

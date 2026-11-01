@@ -118,7 +118,6 @@ export function ModelPicker({
         >
           {engines.length === 0 && <p className="px-2.5 py-2 text-sm text-muted">No engine is set up.</p>}
           {engines.map((engine, i) => {
-            const catalog = engine.builtin && engine.online ? downloadable(engine.models) : [];
             return (
               <div key={engine.id} className={i > 0 ? "mt-1 border-t border-border pt-2" : ""}>
                 <p className={`${headingClass} pt-1.5`}>
@@ -157,45 +156,54 @@ export function ModelPicker({
                     </button>
                   );
                 })}
+              </div>
+            );
+          })}
 
-                {catalog.length > 0 && (
-                  <>
-                    <p className={`${headingClass} mt-1 border-t border-border pt-2.5`}>Available to download</p>
+          {/* Downloads come after every engine's models, so other engines aren't pushed out of sight. */}
+          {engines
+            .filter((engine) => engine.kind === "ollama" && engine.online)
+            .map((engine) => {
+              const catalog = engine.builtin ? downloadable(engine.models) : [];
+              return (
+                <div key={`add-${engine.id}`}>
+                  {catalog.length > 0 && (
+                    <>
+                      <p className={`${headingClass} mt-1 border-t border-border pt-2.5`}>
+                        Available to download{engines.length > 1 ? ` to ${engine.name}` : ""}
+                      </p>
                     {system && (
                       <p className="px-2.5 pb-1 text-xs text-muted">
                         For this Mac: {system.chip ? `${system.chip}, ` : ""}
                         {ram} GB of memory
                       </p>
                     )}
-                    {catalog.map((c) => (
-                      <button
-                        key={c.name}
-                        onClick={() => startInstall({ engine: engine.id, name: c.name, sizeGb: c.sizeGb })}
-                        aria-label={`Download ${c.label}, about ${c.sizeGb} GB${c.fit ? `, ${c.fit === "good" ? "runs well" : c.fit === "tight" ? "tight fit" : "too big"} on this Mac` : ""}`}
-                        className={itemClass}
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[13px] text-muted">{c.label}</span>
-                          <span className="block truncate text-xs text-muted/70">
-                            {c.note} · ~{c.sizeGb} GB
+                      {catalog.map((c) => (
+                        <button
+                          key={c.name}
+                          onClick={() => startInstall({ engine: engine.id, name: c.name, sizeGb: c.sizeGb })}
+                          aria-label={`Download ${c.label}, about ${c.sizeGb} GB${c.fit ? `, ${c.fit === "good" ? "runs well" : c.fit === "tight" ? "tight fit" : "too big"} on this Mac` : ""}`}
+                          className={itemClass}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] text-muted">{c.label}</span>
+                            <span className="block truncate text-xs text-muted/70">
+                              {c.note} · ~{c.sizeGb} GB
+                            </span>
                           </span>
-                        </span>
-                        {c.fit && <FitBadge fit={c.fit} />}
-                        <DownloadIcon width={15} height={15} className="shrink-0 text-muted" />
-                      </button>
-                    ))}
-                  </>
-                )}
-
-                {engine.kind === "ollama" && engine.online && (
+                          {c.fit && <FitBadge fit={c.fit} />}
+                          <DownloadIcon width={15} height={15} className="shrink-0 text-muted" />
+                        </button>
+                      ))}
+                    </>
+                  )}
                   <button onClick={() => startInstall({ engine: engine.id })} className={`${itemClass} mt-1 border-t border-border pt-2.5`}>
                     <PlusIcon width={15} height={15} className="shrink-0" />
-                    Add another model…
+                    {engines.length > 1 ? `Add a model to ${engine.name}…` : "Add another model…"}
                   </button>
-                )}
-              </div>
-            );
-          })}
+                </div>
+              );
+            })}
         </div>
       )}
 

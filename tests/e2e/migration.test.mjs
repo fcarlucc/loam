@@ -156,7 +156,7 @@ describe("a database from before engines", () => {
     );
   });
 
-  it("serves the attachments as they were", async () => {
+  it("returns the attachments as they were", async () => {
     const text = await env.api.get("/api/attachments/1");
     assert.equal(await text.text(), "Milk\nEggs");
     const image = await env.api.get("/api/attachments/4");

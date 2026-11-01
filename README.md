@@ -98,8 +98,8 @@ Pass `-p <port>` (e.g. `npm run dev -- -p 4000`) to choose the port yourself.
 
 ## Engines
 
-An engine is a local server that runs models; the app is a client of the engines you already run and never runs,
-serves or shares models itself. Ollama at `http://localhost:11434` is set up from the start. To add another, open
+An engine is a local server that runs models; the app is a client of the engines you already run and never runs
+or shares models itself. Ollama at `http://localhost:11434` is set up from the start. To add another, open
 **Engines** in the sidebar, pick a preset (or **Other…**), check the URL and press **Test connection**:
 
 | Engine | How it is reached | Preset URL |
