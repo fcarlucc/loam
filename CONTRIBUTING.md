@@ -27,7 +27,10 @@ when Ollama is already running.
 
 - **Privacy first.** No telemetry, no remote assets, no new outbound connections. A change that touches the network or
   the API must keep the guards in `proxy.ts` and extend the tests in `tests/e2e/suites/security.mjs`.
-- **Every API change comes with tests** in `tests/e2e`, against the fake Ollama (`tests/e2e/helpers/fake-ollama.mjs`).
+- **Every API change comes with tests** in `tests/e2e`, against the fake Ollama (`tests/e2e/helpers/fake-ollama.mjs`)
+  and the fake OpenAI-compatible server (`tests/e2e/helpers/fake-openai.mjs`). The app only ever talks to engines
+  through `lib/engines` (see [`docs/ENGINES.md`](docs/ENGINES.md)); a new kind of engine gets its own fake and runs
+  the shared chat suite.
 - **Never use real chats** in tests, screenshots or bug reports. Tests use a throwaway database
   (`OLLAMA_WRAP_DATA_DIR`).
 - Keep pull requests small and focused, with a short description of what changes for the user.

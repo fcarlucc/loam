@@ -65,8 +65,9 @@ export function exited(child, timeout) {
 // `port: null` lets dev.mjs choose the port (then read it from app.output and set app.port).
 // `manageOllama: true` runs the real thing: dev.mjs starts and stops Homebrew's Ollama service.
 // `detached: true` puts the app in its own process group, like a job started from a terminal.
-export async function startApp({ ollamaUrl, manageOllama = false, port, args = [], env = {}, detached = false } = {}) {
-  const dataDir = await mkdtemp(join(tmpdir(), "ollama-wrap-e2e-"));
+// `dataDir` is a throwaway directory holding a database to open, instead of a fresh empty one.
+export async function startApp({ ollamaUrl, manageOllama = false, port, args = [], env = {}, detached = false, dataDir } = {}) {
+  dataDir ??= await mkdtemp(join(tmpdir(), "ollama-wrap-e2e-"));
   if (port === undefined) port = await freePort();
   const child = spawn(
     process.execPath,
