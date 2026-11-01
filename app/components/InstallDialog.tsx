@@ -8,12 +8,15 @@ import { memoryGb, useSystemInfo } from "./useSystemInfo";
 type Step = "name" | "confirm" | "downloading" | "error";
 type PullChunk = { status?: string; digest?: string; total?: number; completed?: number; error?: string };
 
+// Downloads a model into an Ollama engine (`engine` is its id) and reports the progress.
 export function InstallDialog({
+  engine,
   initialName,
   sizeGb,
   onClose,
   onInstalled,
 }: {
+  engine: string;
   initialName?: string;
   sizeGb?: number;
   onClose: () => void;
@@ -50,7 +53,7 @@ export function InstallDialog({
       const res = await fetch("/api/ollama/pull", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed }),
+        body: JSON.stringify({ engine, name: trimmed }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Download failed");

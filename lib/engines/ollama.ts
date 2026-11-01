@@ -214,19 +214,19 @@ export class OllamaEngine implements Engine {
   async chat(request: ChatRequest): Promise<AsyncIterable<StreamEvent>> {
     const res = await this.post("/api/chat", await this.chatBody(request, true), { signal: request.signal });
     if (!res.ok || !res.body) throw await this.failure(res);
-    const source = res.body;
-    const engine = this;
-    return (async function* () {
-      let last: ChatChunk | undefined;
-      for await (const part of readNdjson<ChatChunk>(source)) {
-        if (part.error) throw new Error(part.error);
-        if (part.message?.thinking) yield { type: "thinking", text: part.message.thinking } as const;
-        if (part.message?.content) yield { type: "content", text: part.message.content } as const;
-        if (part.done) last = part;
-      }
-      // Without a final chunk (the stream ended early) the reply has no stats, like a stopped one.
-      yield { type: "done", ...(last ? { stats: toStats(last, (await engine.loadedContextLength(request.model)) ?? request.contextLength) } : {}) };
-    })();
+    return this.events(res.body, request);
+  }
+
+  private async *events(source: ReadableStream<Uint8Array>, request: ChatRequest): AsyncGenerator<StreamEvent> {
+    let last: ChatChunk | undefined;
+    for await (const part of readNdjson<ChatChunk>(source)) {
+      if (part.error) throw new Error(part.error);
+      if (part.message?.thinking) yield { type: "thinking", text: part.message.thinking };
+      if (part.message?.content) yield { type: "content", text: part.message.content };
+      if (part.done) last = part;
+    }
+    // Without a final chunk (the stream ended early) the reply has no stats, like a stopped one.
+    yield { type: "done", ...(last ? { stats: toStats(last, (await this.loadedContextLength(request.model)) ?? request.contextLength) } : {}) };
   }
 
   async complete(request: ChatRequest): Promise<Completion> {

@@ -4,23 +4,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { modelBudgetGb } from "@/lib/catalog";
 import { formatBytes, formatTokens, formatUnload } from "@/lib/format";
 import { KEEP_ALIVE_CHOICES } from "@/lib/settings";
-import type { InstalledModel, LoadedModel, ModelInfo } from "@/lib/types";
+import type { EngineModels, InstalledModel, LoadedModel, ModelInfo } from "@/lib/types";
 import { TrashIcon, XIcon } from "./icons";
 import { memoryGb, useSystemInfo } from "./useSystemInfo";
 
 const buttonClass =
   "rounded-lg border border-border px-2.5 py-1 text-xs transition-colors hover:border-accent disabled:opacity-40";
 
-// Models & memory: what is loaded in RAM, how long it stays there, and the models installed on disk.
-export function ModelsDialog({
-  ollamaRunning,
-  onClose,
-  onModelsChanged,
-}: {
-  ollamaRunning: boolean;
-  onClose: () => void;
-  onModelsChanged: () => void;
-}) {
+// Models & memory of an Ollama engine: what is loaded in RAM, how long it stays there, and the models
+// installed on disk. Other kinds of engine load and keep models on their own, so this panel is Ollama's.
+export function ModelsDialog({ engine, onClose, onModelsChanged }: { engine: EngineModels; onClose: () => void; onModelsChanged: () => void }) {
+  const ollamaRunning = engine.online;
+  const query = `?engine=${encodeURIComponent(engine.id)}`;
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [loaded, setLoaded] = useState<LoadedModel[]>([]);
   const [installed, setInstalled] = useState<InstalledModel[] | null>(null);
@@ -35,14 +30,14 @@ export function ModelsDialog({
   const refresh = useCallback(async () => {
     try {
       const [ps, tags] = await Promise.all([
-        fetch("/api/ollama/ps", { cache: "no-store" }).then((r) => r.json()),
-        fetch("/api/ollama/models", { cache: "no-store" }).then((r) => r.json()),
+        fetch(`/api/ollama/ps${query}`, { cache: "no-store" }).then((r) => r.json()),
+        fetch(`/api/ollama/models${query}`, { cache: "no-store" }).then((r) => r.json()),
       ]);
       setLoaded(ps.models);
       setInstalled(tags.installed);
       setNow(Date.now());
     } catch {}
-  }, []);
+  }, [query]);
 
   useEffect(() => {
     dialogRef.current?.showModal();
@@ -90,11 +85,11 @@ export function ModelsDialog({
     body: JSON.stringify(body),
   });
 
-  const unload = (model: string) => act(`unload:${model}`, () => fetch("/api/ollama/unload", json("POST", { model })));
+  const unload = (model: string) => act(`unload:${model}`, () => fetch("/api/ollama/unload", json("POST", { engine: engine.id, model })));
 
   async function remove(model: string) {
     setConfirming(null);
-    if (await act(`delete:${model}`, () => fetch("/api/ollama/models", json("DELETE", { model })))) onModelsChanged();
+    if (await act(`delete:${model}`, () => fetch("/api/ollama/models", json("DELETE", { engine: engine.id, model })))) onModelsChanged();
   }
 
   async function changeKeepAlive(seconds: number) {
@@ -113,7 +108,7 @@ export function ModelsDialog({
     }
     setDetails((d) => ({ ...d, [model]: "loading" }));
     try {
-      const res = await fetch(`/api/ollama/show?model=${encodeURIComponent(model)}`);
+      const res = await fetch(`/api/ollama/show${query}&model=${encodeURIComponent(model)}`);
       const info = res.ok ? ((await res.json()) as ModelInfo) : "error";
       setDetails((d) => ({ ...d, [model]: info }));
     } catch {
@@ -122,7 +117,7 @@ export function ModelsDialog({
   }
 
   const memoryUsed = loaded.reduce((sum, m) => sum + m.bytes, 0);
-  const diskUsed = (installed ?? []).reduce((sum, m) => sum + m.bytes, 0);
+  const diskUsed = (installed ?? []).reduce((sum, m) => sum + (m.bytes ?? 0), 0);
 
   return (
     <dialog
@@ -140,7 +135,7 @@ export function ModelsDialog({
       <div className="flex max-h-[85vh] flex-col">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-border pl-5 pr-2">
           <h2 id="models-title" className="text-sm font-semibold">
-            Models & memory
+            Models & memory{engine.builtin ? "" : ` · ${engine.name}`}
           </h2>
           <button
             onClick={close}
@@ -152,7 +147,11 @@ export function ModelsDialog({
         </div>
 
         <div className="flex min-h-0 flex-col gap-6 overflow-y-auto p-5">
-          {!ollamaRunning && <p className="text-sm text-muted">Ollama is stopped: start it from the sidebar to manage models.</p>}
+          {!ollamaRunning && (
+            <p className="text-sm text-muted">
+              {engine.builtin ? "Ollama is stopped: start it from the sidebar to manage models." : `${engine.name} is offline: start it to manage its models.`}
+            </p>
+          )}
           {error && (
             <p role="alert" className="rounded-lg bg-surface-2 px-3 py-2 text-sm text-danger">
               {error}
@@ -240,7 +239,7 @@ export function ModelsDialog({
                       className="flex items-center gap-2 text-sm"
                     >
                       <span className="min-w-0 flex-1">
-                        Delete <span className="font-mono">{m.name}</span>? This frees {formatBytes(m.bytes)}; you can download it again later.
+                        Delete <span className="font-mono">{m.name}</span>? This frees {formatBytes(m.bytes ?? 0)}; you can download it again later.
                       </span>
                       <button
                         onClick={() => void remove(m.name)}
@@ -257,7 +256,7 @@ export function ModelsDialog({
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-mono text-[13px]">{m.name}</p>
                         <p className="text-xs text-muted">
-                          {[m.parameterSize, m.quantization, formatBytes(m.bytes)].filter(Boolean).join(" · ")}
+                          {[m.parameterSize, m.quantization, m.bytes === null ? null : formatBytes(m.bytes)].filter(Boolean).join(" · ")}
                         </p>
                       </div>
                       <button onClick={() => void toggleDetails(m.name)} aria-expanded={!!info} className={buttonClass}>
@@ -291,7 +290,7 @@ export function ModelsDialog({
                           <dt className="text-muted">Max context</dt>
                           <dd>{info.contextMax ? `${formatTokens(info.contextMax)} tokens` : "—"}</dd>
                           <dt className="text-muted">Can do</dt>
-                          <dd>{info.capabilities.length ? info.capabilities.join(", ") : "—"}</dd>
+                          <dd>{info.capabilities?.length ? info.capabilities.join(", ") : "—"}</dd>
                           <dt className="text-muted">License</dt>
                           <dd className="text-muted">{info.license ?? "—"}</dd>
                         </>

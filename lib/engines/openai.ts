@@ -163,33 +163,33 @@ export class OpenAIEngine implements Engine {
   async chat(request: ChatRequest): Promise<AsyncIterable<StreamEvent>> {
     const start = Date.now();
     const res = await this.post(request, true);
-    const source = res.body!;
-    const engine = this;
-    return (async function* () {
-      let usage: Usage | null | undefined;
-      let timings: Timings | undefined;
-      let first: number | undefined;
-      for await (const data of readSse(source)) {
-        let chunk: Chunk;
-        try {
-          chunk = JSON.parse(data) as Chunk;
-        } catch {
-          throw engine.malformed();
-        }
-        if (chunk.error !== undefined) throw new Error(errorMessage(chunk) ?? `${engine.config.name} reported an error.`);
-        const delta = chunk.choices?.[0]?.delta;
-        const thought = delta?.reasoning_content ?? delta?.reasoning;
-        if (thought) yield { type: "thinking", text: thought } as const;
-        if (delta?.content) {
-          first ??= Date.now();
-          yield { type: "content", text: delta.content } as const;
-        }
-        if (chunk.usage) usage = chunk.usage;
-        if (chunk.timings) timings = chunk.timings;
+    return this.events(res.body!, start);
+  }
+
+  private async *events(source: ReadableStream<Uint8Array>, start: number): AsyncGenerator<StreamEvent> {
+    let usage: Usage | null | undefined;
+    let timings: Timings | undefined;
+    let first: number | undefined;
+    for await (const data of readSse(source)) {
+      let chunk: Chunk;
+      try {
+        chunk = JSON.parse(data) as Chunk;
+      } catch {
+        throw this.malformed();
       }
-      const stats = engine.stats(usage, timings, { start, first, end: Date.now() });
-      yield { type: "done", ...(stats ? { stats } : {}) };
-    })();
+      if (chunk.error !== undefined) throw new Error(errorMessage(chunk) ?? `${this.config.name} reported an error.`);
+      const delta = chunk.choices?.[0]?.delta;
+      const thought = delta?.reasoning_content ?? delta?.reasoning;
+      if (thought) yield { type: "thinking", text: thought };
+      if (delta?.content) {
+        first ??= Date.now();
+        yield { type: "content", text: delta.content };
+      }
+      if (chunk.usage) usage = chunk.usage;
+      if (chunk.timings) timings = chunk.timings;
+    }
+    const stats = this.stats(usage, timings, { start, first, end: Date.now() });
+    yield { type: "done", ...(stats ? { stats } : {}) };
   }
 
   async complete(request: ChatRequest): Promise<Completion> {

@@ -25,6 +25,8 @@ export type EngineKind = "ollama" | "openai";
 export type EngineConfig = { id: string; name: string; kind: EngineKind; baseUrl: string; builtin: boolean; remote: boolean };
 // An engine as the model picker sees it: whether it answers right now, and its models.
 export type EngineModels = EngineConfig & { online: boolean; models: string[]; error?: string };
+// What the page sends a message with: a model of one engine.
+export type ModelChoice = { engine: string; model: string };
 
 export type ChatSummary = {
   id: number;

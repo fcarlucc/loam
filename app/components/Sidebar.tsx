@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { ChatSummary } from "@/lib/types";
-import { ChartIcon, ChatIcon, ColumnsIcon, CubeIcon, PencilIcon, PlusIcon, TrashIcon } from "./icons";
+import { ChartIcon, ChatIcon, ColumnsIcon, CubeIcon, PencilIcon, PlugIcon, PlusIcon, TrashIcon } from "./icons";
 import { OllamaStatus, type useOllamaStatus } from "./OllamaStatus";
 import { NotifyToggle } from "./NotifyToggle";
 import { ThemeToggle } from "./ThemeToggle";
@@ -146,6 +146,7 @@ export function Sidebar({
   onDelete,
   onRename,
   onOpenModels,
+  onOpenEngines,
   onOpenResult,
   onOpenCompare,
   onOpenDashboard,
@@ -158,6 +159,7 @@ export function Sidebar({
   onDelete: (id: number) => void;
   onRename: (id: number, title: string) => void;
   onOpenModels: () => void;
+  onOpenEngines: () => void;
   onOpenResult: (chatId: number, messageId: number | null) => void;
   onOpenCompare: () => void;
   onOpenDashboard: () => void;
@@ -227,10 +229,17 @@ export function Sidebar({
       </button>
       <button
         onClick={onOpenModels}
-        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+        className="-mb-2 flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-fg"
       >
         <CubeIcon width={16} height={16} />
         Models & memory
+      </button>
+      <button
+        onClick={onOpenEngines}
+        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+      >
+        <PlugIcon width={16} height={16} />
+        Engines
       </button>
       <OllamaStatus state={ollama} />
       <div className="flex items-stretch gap-2">

@@ -3,14 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
-import type { ChatEvent, ReplyStats } from "@/lib/types";
+import type { ChatEvent, EngineModels, ModelChoice, ReplyStats } from "@/lib/types";
 import { TypingDots } from "./Chat";
 import { MenuIcon, SendIcon, StopIcon, XIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { StatsLine } from "./StatsLine";
 
 type Answer = {
-  model: string;
+  choice: ModelChoice;
+  model: string; // as shown: the model, and its engine when there are several
   text: string;
   stats?: ReplyStats;
   status: "waiting" | "streaming" | "done" | "stopped" | "error";
@@ -20,23 +21,29 @@ type Answer = {
 const selectClass =
   "min-w-0 flex-1 rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-xs outline-none focus:border-accent disabled:opacity-50";
 
+// A model of an engine as a <select> value (a model name can hold anything but a line break).
+const keyOf = (c: ModelChoice) => `${c.engine}\n${c.model}`;
+
 // Same prompt to two models, answers side by side. The models run one after the other so only one
 // has to be loaded at a time; nothing is saved to the chat history.
 export function CompareView({
-  models,
-  defaultModel,
-  ollamaRunning,
+  engines,
+  defaultChoice,
   onClose,
   onOpenSidebar,
 }: {
-  models: string[];
-  defaultModel: string;
-  ollamaRunning: boolean;
+  engines: EngineModels[];
+  defaultChoice: ModelChoice;
   onClose: () => void;
   onOpenSidebar: () => void;
 }) {
-  const [modelA, setModelA] = useState(defaultModel);
-  const [modelB, setModelB] = useState(() => models.find((m) => m !== defaultModel) ?? defaultModel);
+  // Every model of every engine that answers, named with its engine when there are several engines.
+  const options = engines.flatMap((e) =>
+    e.models.map((model) => ({ key: keyOf({ engine: e.id, model }), choice: { engine: e.id, model }, label: engines.length > 1 ? `${model} · ${e.name}` : model })),
+  );
+  const anyOnline = engines.some((e) => e.online);
+  const [modelA, setModelA] = useState(() => (options.some((o) => o.key === keyOf(defaultChoice)) ? keyOf(defaultChoice) : (options[0]?.key ?? "")));
+  const [modelB, setModelB] = useState(() => options.find((o) => o.key !== keyOf(defaultChoice))?.key ?? modelA);
   const [prompt, setPrompt] = useState("");
   const [asked, setAsked] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Answer[] | null>(null);
@@ -45,17 +52,17 @@ export function CompareView({
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const running = answers?.some((a) => a.status === "waiting" || a.status === "streaming") ?? false;
-  const ready = ollamaRunning && !!modelA && !!modelB && !running;
+  const ready = anyOnline && !!modelA && !!modelB && !running;
 
   const update = (i: number, change: (a: Answer) => Answer) =>
     setAnswers((list) => list && list.map((a, j) => (j === i ? change(a) : a)));
 
-  async function ask(i: number, model: string, content: string, signal: AbortSignal) {
+  async function ask(i: number, choice: ModelChoice, content: string, signal: AbortSignal) {
     update(i, (a) => ({ ...a, status: "streaming" }));
     const res = await fetch("/api/compare", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, content }),
+      body: JSON.stringify({ engine: choice.engine, model: choice.model, content }),
       signal,
     });
     if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Something went wrong");
@@ -73,15 +80,16 @@ export function CompareView({
     abortRef.current = controller;
     setAsked(content);
     setPrompt("");
-    const pair = [modelA, modelB];
-    setAnswers(pair.map((model) => ({ model, text: "", status: "waiting" })));
-    for (const [i, model] of pair.entries()) {
+    const pair = [modelA, modelB].map((key) => options.find((o) => o.key === key)).filter((o) => o !== undefined);
+    if (pair.length < 2) return;
+    setAnswers(pair.map((o) => ({ choice: o.choice, model: o.label, text: "", status: "waiting" })));
+    for (const [i, o] of pair.entries()) {
       if (controller.signal.aborted) {
         update(i, (a) => ({ ...a, status: "stopped" }));
         continue;
       }
       try {
-        await ask(i, model, content, controller.signal);
+        await ask(i, o.choice, content, controller.signal);
       } catch (e) {
         update(i, (a) =>
           controller.signal.aborted
@@ -92,7 +100,7 @@ export function CompareView({
     }
     // Both answers are in while the user was in another app or tab: tell them, if they asked for it.
     if (!controller.signal.aborted && userIsAway()) {
-      notify({ title: "Comparison ready", body: `${modelA} vs ${modelB} · ${snippet(content, 80)}` });
+      notify({ title: "Comparison ready", body: `${pair[0].label} vs ${pair[1].label} · ${snippet(content, 80)}` });
     }
   }
 
@@ -119,14 +127,18 @@ export function CompareView({
 
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
         <select value={modelA} onChange={(e) => setModelA(e.target.value)} disabled={running} aria-label="Model A" className={selectClass}>
-          {models.map((m) => (
-            <option key={m}>{m}</option>
+          {options.map((o) => (
+            <option key={o.key} value={o.key}>
+              {o.label}
+            </option>
           ))}
         </select>
         <span className="text-xs text-muted">vs</span>
         <select value={modelB} onChange={(e) => setModelB(e.target.value)} disabled={running} aria-label="Model B" className={selectClass}>
-          {models.map((m) => (
-            <option key={m}>{m}</option>
+          {options.map((o) => (
+            <option key={o.key} value={o.key}>
+              {o.label}
+            </option>
           ))}
         </select>
       </div>
@@ -139,8 +151,8 @@ export function CompareView({
               Ask both models the same question and compare the answers, their speed and the time spent loading. They run one
               after the other, with your default chat settings, and nothing is saved.
             </p>
-            {models.length < 2 && (
-              <p className="text-sm text-muted">Only one model is installed: download another from the model picker to compare.</p>
+            {options.length < 2 && (
+              <p className="text-sm text-muted">Only one model is available: download another from the model picker, or start another engine, to compare.</p>
             )}
           </div>
         ) : (
@@ -188,8 +200,8 @@ export function CompareView({
             }}
             rows={2}
             autoFocus
-            disabled={!ollamaRunning}
-            placeholder={ollamaRunning ? "Ask both models…" : "Start Ollama to compare"}
+            disabled={!anyOnline}
+            placeholder={anyOnline ? "Ask both models…" : "Start an engine to compare"}
             aria-label="Prompt for both models"
             className="max-h-[200px] flex-1 resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
           />
