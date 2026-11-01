@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./data/**)",
+      "Edit(./data/**)",
+      "Write(./data/**)",
+      "Bash(sqlite3:*)",
+      "Bash(cat data/*)",
+      "Bash(cp data/*)",
+      "Bash(strings data/*)"
+    ]
+  }
+}

@@ -110,3 +110,17 @@ proxy.ts               request guard for /api
 scripts/dev.mjs        starts and stops Ollama around `next dev`
 tests/e2e              end-to-end tests: API against a fake Ollama, lifecycle against the real one
 ```
+
+## Roadmap
+
+- **Tool calling with MCP**: let models call tools from MCP servers, with a clear approval step in the chat before
+  any tool runs
+- **Desktop app**: turn the local web app into a macOS desktop app, keeping every feature and the UI
+  (strategy in [`docs/DESKTOP.md`](docs/DESKTOP.md))
+- **Data in `~/Library/Application Support/ollama-wrap`** instead of the project folder, with a safe migration of
+  existing chats
+- **PDF attachments**
+
+## License
+
+[MIT](LICENSE)
