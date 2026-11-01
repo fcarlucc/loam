@@ -1,5 +1,5 @@
 {
-  "name": "ollama-wrap",
+  "name": "loam",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -11,7 +11,9 @@
     "build": "NEXT_TELEMETRY_DISABLED=1 next build",
     "start": "NEXT_TELEMETRY_DISABLED=1 next start -H 127.0.0.1",
     "lint": "eslint",
-    "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\""
+    "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\"",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test:api": "node --test --test-concurrency=1 tests/e2e/api.test.mjs"
   },
   "dependencies": {
     "next": "16.3.8",

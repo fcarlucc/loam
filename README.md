@@ -1,48 +1,95 @@
-# Ollama Wrap
+<p align="center">
+  <img src="app/icon.png" alt="" width="96" height="96">
+</p>
 
-A local web UI for chatting with your [Ollama](https://ollama.com) models. Chats are saved in SQLite and stay in the sidebar between launches.
+<h1 align="center">Loam</h1>
 
-- Streaming replies with Markdown and syntax-highlighted code, stop / regenerate / retry
+<p align="center">
+  <strong>Every local model, one private app.</strong><br>
+  <em>Loam</em> stands for <strong>L</strong>ocal <strong>O</strong>ffline <strong>A</strong>I <strong>M</strong>odel.
+</p>
+
+<p align="center">
+  <a href="https://github.com/fcarlucc/loam/actions/workflows/ci.yml"><img src="https://github.com/fcarlucc/loam/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/platform-macOS-lightgrey" alt="macOS">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/chat-dark.png">
+    <img src="docs/screenshots/chat-light.png" alt="A chat in Loam: a reasoning model's reply with code, the chat list grouped by date, model and reasoning pickers" width="900">
+  </picture>
+</p>
+
+Loam is a chat app for the AI models that run on your own computer. Your conversations, files and settings stay on
+your Mac: no account, no cloud, no telemetry. It runs on top of [Ollama](https://ollama.com) today, with LM Studio,
+llama.cpp and MLX next (see the [roadmap](#roadmap)).
+
+## Why
+
+I wanted the comfort of a modern AI chat app without my conversations leaving my machine. The local tools I tried were
+either a bare chat box or a server platform that needs Docker. Loam sits in between: a polished, fast chat app for one
+person, where privacy is a guarantee checked by tests, not a promise.
+
+## Features
+
+**Chat**
+- Streaming replies with Markdown and syntax-highlighted code; stop, regenerate, retry
 - Edit a sent message or regenerate a reply: every version is kept, switch between them with ◀ 2/3 ▶
-- Per-chat settings in a right sidebar: system prompt, temperature, context length, plus defaults for new chats
+- Branch a conversation from any reply into a new chat
+- Reasoning models: turn reasoning off, on or to a level per chat, and read what the model thought in a fold-out block
+- Attachments: drop, paste or pick text and code files, and images for models that can see them. Files stay with the
+  chat on your Mac and are deleted with it
+- Per-chat settings in a side panel: system prompt, temperature, context length, plus defaults for new chats
 - Stats under every reply (speed, tokens, how full the context is), with a warning before old messages get dropped
-- Chat history in the sidebar (rename, delete), grouped by date, with full-text search across every message
-- Chats are named by the model after the first reply (a few words, in the language of the conversation); rename them
-  anytime. Skipped when models are set to unload right after each reply, since naming would load the model again
-- Model picker next to the composer, with one-click download of popular models, labelled by how well they fit this Mac's memory
-- Compare two models side by side on the same prompt (answers, speed, load time; not saved)
+- Chats are named by the model after the first reply; rename them anytime
+- Optional desktop notification when a reply finishes while you are in another app
+
+**History**
+- Chat list grouped by date, with full-text search across every message
+- Deleting a chat wipes its text from the database files, not just from the list
+
+**Models**
+- Model picker next to the composer, with one-click download of popular models, labelled by how well they fit your
+  Mac's memory
 - Models & memory panel: what's loaded in RAM, free it, how long models stay loaded, model details, delete models
-- Usage dashboard (activity, tokens, speed per model) and a repeatable speed benchmark
-- Start/stop Ollama from the sidebar; light, dark and system themes
-- Optional desktop notification when a reply finishes while you are in another app or tab (bell in the sidebar)
-- Reasoning models: turn the reasoning off, on or to a level per chat (next to the model picker) and read what the
-  model thought in a fold-out block under the reply. The reasoning is kept with the reply but never sent back to the model
-- Attachments: drop, paste or pick text and code files (up to 8 per message, 200K characters each), and images for
-  models that can see them, resized in the browser to about 1024 px. Files stay with the chat on this Mac and are
-  deleted with it; a warning shows when they take more than half of the model's context. No PDF yet
+- Start and stop Ollama from the sidebar
+- To help you pick a model to chat with: answers from two models side by side on the same prompt, and a quick speed test
+- Usage dashboard: activity, tokens and speed per model
+
+**Privacy**, details in [SECURITY.md](SECURITY.md)
+- The app listens on `127.0.0.1` only: other devices on your network can't reach it
+- Other websites can't use it: requests with a foreign `Host` or `Origin` are rejected
+- The page loads nothing from the internet, and images in replies are never loaded automatically
+- All of this is covered by the tests, which run on every push
+
+Light, dark and system themes.
 
 ## Requirements
 
-- macOS with Ollama installed through Homebrew: `brew install ollama`
+- macOS
 - Node.js `^22.13.0 || >=23.4.0` (the built-in `node:sqlite` module is used, no native dependencies)
+- [Ollama](https://ollama.com): the official app, or Homebrew's `brew install ollama`
 
 ## Getting started
 
 ```bash
 npm install
-npm run dev
+npm run dev       # with Homebrew's Ollama: starts it, and stops it when the app exits
+npm run dev:raw   # with the Ollama app, or any Ollama that is already running
 ```
 
-`npm run dev` starts Ollama (`brew services restart ollama`), then the app, and prints the address to open:
-<http://localhost:3000>, or the next free port if another app already uses it.
-When the app exits (Ctrl+C, closing the terminal, a crash) it runs `brew services stop ollama`, so the model never keeps running in the background.
+Then open the address printed in the terminal: <http://localhost:3000>, or the next free port.
 
 | Script | What it does |
 | --- | --- |
-| `npm run dev` | Ollama + app, Ollama stopped on exit |
+| `npm run dev` | Homebrew's Ollama + app; Ollama is stopped when the app exits (Ctrl+C, terminal closed, crash) |
 | `npm run dev:raw` | App only, Ollama untouched |
 | `npm run build` / `npm start` | Production build on <http://127.0.0.1:3000>; Ollama is managed from the sidebar |
-| `npm run test:e2e` | End-to-end tests, see [Tests](#tests) |
+| `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
+| `npm run test:api` | API tests against a fake Ollama, no model needed |
+| `npm run test:e2e` | API tests + lifecycle tests with Homebrew's real Ollama |
 
 Pass `-p <port>` (e.g. `npm run dev -- -p 4000`) to choose the port yourself.
 
@@ -51,39 +98,17 @@ Pass `-p <port>` (e.g. `npm run dev -- -p 4000`) to choose the port yourself.
 Chats and settings live in `data/` (ignored by git). To back them up, copy the whole folder while the app is stopped:
 SQLite keeps recent changes in `ollama-wrap.db-wal` next to the database, so the `.db` file alone may be incomplete.
 
-## Privacy and security
-
-Everything stays on this machine:
-
-- The server listens on `127.0.0.1` only, so other devices on the network can't reach it.
-- The API (`proxy.ts`) rejects requests whose `Host` isn't local (DNS rebinding) and changes that don't come from the app's own page (CSRF).
-- Images in model replies are shown as links and never loaded automatically, so a reply can't send data to a remote server.
-- Next.js telemetry is switched off by the scripts, and the page loads nothing from the internet. The only outbound
-  connections are the ones you ask for (downloading a model) and Next.js fetching the Geist font files once when it compiles.
-- Reply notifications are off by default. When on, your browser shows them through macOS, so the start of a reply
-  appears in Notification Center like any other notification. Nothing is sent anywhere.
-
-All of this is checked by the tests below. Two things are outside the app's control:
-
-- Ollama's own API on port 11434 also listens on the loopback only, but Ollama lets any page served from `localhost`
-  call it directly (that is its default `OLLAMA_ORIGINS`). Another local web app could use your models; this app can't change that.
-- If the `node` process is killed with `kill -9`, nothing can run, so Ollama stays up until you run `brew services stop ollama`.
-
 ## Tests
 
-```bash
-npm run test:e2e
-```
+`tests/e2e/api.test.mjs` starts the app exactly as `npm run dev` does (`scripts/dev.mjs`), with a throwaway database and
+its own build directory, so it can run while the app is open and never touches your chats. It talks to a fake Ollama
+(`tests/e2e/helpers/fake-ollama.mjs`) that needs no model and no memory, and checks every API route: the loopback-only
+binding, the `Host` and `Origin` guards on every route (new ones included), streaming, stop and disconnect, message
+versions, branching, attachments, deleting for good, search, settings, usage, the models panel.
 
-`tests/e2e/api.test.mjs` starts the app exactly as `npm run dev` does (`scripts/dev.mjs`), with a throwaway database
-and its own build directory (`.next-e2e`), so it can run while the app is open and never touches your chats. It talks
-to a fake Ollama (`tests/e2e/helpers/fake-ollama.mjs`) that needs no model and no memory, and checks every API route:
-the loopback-only binding, the `Host` and `Origin` guards on every route (new ones included), streaming, stop and
-disconnect, message versions, deleting for good, search, settings, usage, benchmark, compare, the models panel.
-
-`tests/e2e/lifecycle.test.mjs` uses the real Homebrew Ollama service: it checks that `npm run dev` starts it and stops it
-on Ctrl+C, when the terminal is closed and when Next crashes, leaving no process behind, that the sidebar's power switch
-works and that a taken port is skipped. It restarts that service, so it skips itself when Ollama is already running.
+`tests/e2e/lifecycle.test.mjs` uses Homebrew's real Ollama service: it checks that `npm run dev` starts it and stops it
+on Ctrl+C, when the terminal is closed and when Next crashes, leaving no process behind. It restarts that service, so it
+skips itself when Ollama is already running.
 
 ## Configuration
 
@@ -96,13 +121,13 @@ works and that a taken port is skipped. It restarts that service, so it skips it
 
 ```
 app/api/chat           send, edit, regenerate or retry, streamed reply (and /stop)
-app/api/chats          list, rename, delete chats, per-chat settings, switch versions
+app/api/chats          list, rename, delete, branch chats, per-chat settings, switch versions
 app/api/search         full-text search (SQLite FTS5)
-app/api/compare        one model's answer for the comparison view (nothing saved)
+app/api/compare        one model's answer for the side-by-side view (nothing saved)
 app/api/settings       defaults for new chats, keep-alive
 app/api/system         this Mac's chip and memory (model recommendations)
 app/api/usage          usage totals, replies per day, per model
-app/api/benchmark      run / list / clear benchmark results
+app/api/benchmark      speed test results
 app/api/ollama         status, start/stop, models (list, delete), model info, memory (ps, unload), downloads
 app/components         UI (AppShell, Chat, Sidebar, ModelPicker, …)
 lib/db.ts              SQLite schema, migrations and queries (messages form a tree of versions)
@@ -113,13 +138,21 @@ tests/e2e              end-to-end tests: API against a fake Ollama, lifecycle ag
 
 ## Roadmap
 
-- **Tool calling with MCP**: let models call tools from MCP servers, with a clear approval step in the chat before
-  any tool runs
-- **Desktop app**: turn the local web app into a macOS desktop app, keeping every feature and the UI
-  (strategy in [`docs/DESKTOP.md`](docs/DESKTOP.md))
-- **Data in `~/Library/Application Support/ollama-wrap`** instead of the project folder, with a safe migration of
-  existing chats
-- **PDF attachments**
+- **v0.2 · Any local engine, easy install**: LM Studio, llama.cpp and MLX next to Ollama, through one engine layer;
+  works with any Ollama install; one-command install; data in `~/Library/Application Support/Loam`
+- **v0.3 · Tools and projects**: MCP tools with an approval step before anything runs; projects that group chats with
+  shared instructions and files
+- **v0.4 · Desktop app**: a native macOS app with a global shortcut, keeping every feature and the UI (strategy in
+  [`docs/DESKTOP.md`](docs/DESKTOP.md))
+- **Later**: chat with your documents (local, with cited sources), PDF attachments, prompt library, export and import
+  (including from other chat apps), local voice input
+
+Progress is tracked in the [issues](https://github.com/fcarlucc/loam/issues).
+
+## Contributing
+
+Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Please report security issues privately,
+as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

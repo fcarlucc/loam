@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # macOS, like the app's users: some routes read this Mac's chip and memory.
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # API tests run against a fake Ollama with a throwaway database. The lifecycle tests need
+      # Homebrew's real Ollama service, so they run locally only (npm run test:e2e).
+      - run: npm run test:api

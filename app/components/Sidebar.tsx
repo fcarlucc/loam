@@ -168,7 +168,7 @@ export function Sidebar({
       <div className="flex items-center gap-2 px-1 pt-1">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icon.png" alt="" width={32} height={32} className="h-8 w-8" />
-        <span className="text-[15px] font-semibold tracking-tight">Ollama Wrap</span>
+        <span className="text-[15px] font-semibold tracking-tight">Loam</span>
       </div>
 
       <button

@@ -16,7 +16,7 @@ process.stdout.on("error", () => {});
 process.stderr.on("error", () => {});
 const log = (msg) => {
   try {
-    console.log(`\x1b[35m[ollama-wrap]\x1b[0m ${msg}`);
+    console.log(`\x1b[35m[loam]\x1b[0m ${msg}`);
   } catch {}
 };
 

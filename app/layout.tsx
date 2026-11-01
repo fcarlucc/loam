@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Ollama Wrap",
-  description: "A local interface for your Ollama models",
+  title: "Loam",
+  description: "Every local model, one private app",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

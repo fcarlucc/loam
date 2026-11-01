@@ -110,7 +110,7 @@ export function securitySuite(env) {
       const res = await fetch(`${env.app.url}/`);
       assert.equal(res.status, 200);
       const html = await res.text();
-      assert.match(html, /Ollama Wrap/);
+      assert.match(html, /<title>Loam<\/title>/);
       const remote = [...html.matchAll(/\b(?:src|href)="(https?:\/\/[^"]+)"/g)].map((m) => m[1]);
       assert.deepEqual(remote, [], "the page references remote resources");
     });

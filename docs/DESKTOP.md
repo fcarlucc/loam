@@ -1,6 +1,6 @@
-# Ollama Wrap as a desktop app: strategy
+# Loam as a desktop app: strategy
 
-> **What this is:** the options for turning Ollama Wrap from a local web app (Next.js) into a desktop app, keeping
+> **What this is:** the options for turning Loam (formerly Ollama Wrap) from a local web app (Next.js) into a desktop app, keeping
 > every feature and the UI, with their effect on privacy, security and speed. Nothing here is built yet.
 >
 > **Status:** proposal · **Written:** 2026-10-17
@@ -59,7 +59,7 @@ What a shell changes is the **attack surface** around the data and how **verifia
    (16.0.11 / 16.1.5). The point is the category, not this one bug: a web server is patched several
    times a year, and a privacy tool is better off without one.
 3. **Verifiability.** With a desktop app the whole thing is one process with a name. A firewall such as
-   LuLu or Little Snitch shows "Ollama Wrap" connecting only to `127.0.0.1:11434` (and to the model
+   LuLu or Little Snitch shows "Loam" connecting only to `127.0.0.1:11434` (and to the model
    registry when a model is downloaded). That is something anyone can check and screenshot. With the web
    app the process is `node` and the UI is a browser tab.
 
