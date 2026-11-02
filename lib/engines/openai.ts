@@ -1,3 +1,4 @@
+import { engineFetch } from "./fetch";
 import type { EngineConfig, InstalledModel, ModelInfo, ReplyStats } from "../types";
 import { readSse } from "./sse";
 import { type ChatRequest, type Completion, type Engine, EngineError, type EngineFeatures, type ModelCapabilities, type StreamEvent } from "./types";
@@ -57,7 +58,7 @@ export class OpenAIEngine implements Engine {
   private async listed(timeoutMs: number): Promise<ListedModel[]> {
     let res: Response;
     try {
-      res = await fetch(this.url("/models"), { signal: AbortSignal.timeout(timeoutMs), cache: "no-store" });
+      res = await engineFetch(this.url("/models"), { signal: AbortSignal.timeout(timeoutMs), cache: "no-store" });
     } catch {
       throw this.unreachable();
     }
@@ -125,7 +126,7 @@ export class OpenAIEngine implements Engine {
   private async post(request: ChatRequest, stream: boolean) {
     let res: Response;
     try {
-      res = await fetch(this.url("/chat/completions"), {
+      res = await engineFetch(this.url("/chat/completions"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(this.body(request, stream)),

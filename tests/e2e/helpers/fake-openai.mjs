@@ -16,6 +16,8 @@ export const OPENAI_MODELS = {
   "thinker-7b": { thinks: true }, // sends its reasoning as reasoning_content before the reply
   "seer-7b": { sees: true }, // accepts image parts; the others refuse them
   "garbled-7b": { garbles: true }, // streams a few words, then something that isn't JSON
+  "/models/local/llama-3.2-3b-q4_k_m.gguf": {}, // llama.cpp and MLX list a model by its file path
+  "org/qwen3-8b@q4_k_m": {}, // LM Studio's id for one quantization of a model
 };
 export const NO_VISION_ERROR = "This model does not support image input.";
 export const FLAKY_ERROR = "the fake server fell over";

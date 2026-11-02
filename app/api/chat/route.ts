@@ -1,5 +1,5 @@
 import { inlineFiles, parseAttachments } from "@/lib/attachments";
-import { isValidModelName } from "@/lib/catalog";
+import { isModelId } from "@/lib/catalog";
 import {
   addAttachments,
   addMessage,
@@ -15,7 +15,7 @@ import {
   transaction,
   updateChat,
 } from "@/lib/db";
-import { engineFailure, type ModelMessage, resolveEngine, type StreamEvent } from "@/lib/engines";
+import { acceptsModel, engineFailure, type ModelMessage, resolveEngine, type StreamEvent } from "@/lib/engines";
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
 import { parseSettings } from "@/lib/settings";
@@ -33,7 +33,7 @@ import type { ChatEvent, ChatMessage, ReplyStats } from "@/lib/types";
 export async function POST(request: Request) {
   const body = await readJson(request);
   const chatId = body.chatId ?? null;
-  const model = typeof body.model === "string" && isValidModelName(body.model) ? body.model : "";
+  const model = typeof body.model === "string" && isModelId(body.model) ? body.model : "";
   const content = typeof body.content === "string" ? body.content.trim() : "";
   const editOf = body.editOf ?? null;
   const regenerate = body.regenerate ?? null;
@@ -55,6 +55,7 @@ export async function POST(request: Request) {
   }
   const engine = resolveEngine(body.engine);
   if (engine instanceof Response) return engine;
+  if (!acceptsModel(engine, model)) return jsonError("Invalid request", 400);
   const chat = chatId === null ? undefined : getChat(chatId);
   if (chatId !== null && !chat) return jsonError("Chat not found", 404);
   if (!chat && (!sending || editOf !== null)) return jsonError("Invalid request", 400);

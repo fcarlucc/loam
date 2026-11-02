@@ -1,6 +1,7 @@
 // Engines: the built-in Ollama, adding and editing engines (loopback only), testing a connection, what the
 // model picker gets, and how chats and the Ollama-only routes relate to engines.
 import assert from "node:assert/strict";
+import http from "node:http";
 import { describe, it } from "node:test";
 import { CONTEXT_LENGTH, OPENAI_MODELS } from "../helpers/fake-openai.mjs";
 import { chat } from "../helpers/http.mjs";
@@ -201,12 +202,63 @@ export function enginesSuite(env) {
       const bench = await env.api.json("/api/benchmark", { method: "POST", body: { engine: env.openaiEngine, model: "fake-7b", cold: true } });
       assert.equal(bench.status, 200, JSON.stringify(bench.data));
       assert.equal(bench.data.result.engine, env.openaiEngine);
+      assert.equal(bench.data.result.cold, false, "nothing was unloaded, so it is not a cold start");
       assert.ok(bench.data.result.tokens > 0);
       assert.equal(env.openai.lastChat().body.stream, false);
       assert.deepEqual([env.openai.lastChat().body.temperature, env.openai.lastChat().body.seed, env.openai.lastChat().body.max_tokens], [0, 42, 300]);
       const listed = (await env.api.json("/api/benchmark")).data.results.find((r) => r.engine === env.openaiEngine);
       assert.equal(listed.model, "fake-7b");
       await env.api.json("/api/benchmark", { method: "DELETE" });
+    });
+
+    it("an engine that redirects is refused: nothing reaches the other host", async () => {
+      // `target` stands for any other host; `redirector` is a local server that answers every request with a 307 to it.
+      const listen = (handler) =>
+        new Promise((resolve) => {
+          const server = http.createServer(handler);
+          server.listen(0, "127.0.0.1", () => resolve(server));
+        });
+      let reached = 0;
+      const target = await listen((_req, res) => {
+        reached++;
+        res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+      });
+      const targetUrl = `http://127.0.0.1:${target.address().port}`;
+      const redirector = await listen((req, res) => {
+        req.resume();
+        res.writeHead(307, { Location: `${targetUrl}${req.url}` }).end();
+      });
+      try {
+        const added = await add({ name: "Redirector", kind: "openai", baseUrl: `http://127.0.0.1:${redirector.address().port}/v1` });
+        assert.equal(added.status, 201, JSON.stringify(added.data));
+        const id = added.data.engine.id;
+        const sent = await env.api.json("/api/chat", { method: "POST", body: { engine: id, chatId: null, content: "secret", model: "fake-7b" } });
+        assert.equal(sent.status, 502);
+        const tested = await env.api.json(`/api/engines/${id}/test`, { method: "POST" });
+        assert.notEqual(tested.data?.ok, true);
+        const listed = (await picker()).find((e) => e.id === id);
+        assert.equal(listed.online, false);
+        assert.equal(reached, 0, "a request followed the redirect");
+        assert.equal((await env.api.json(`/api/engines/${id}`, { method: "DELETE" })).status, 200);
+      } finally {
+        redirector.close();
+        target.close();
+      }
+    });
+
+    it("models are used by the id the engine lists, even a file path or an id with @", async () => {
+      for (const model of ["/models/local/llama-3.2-3b-q4_k_m.gguf", "org/qwen3-8b@q4_k_m"]) {
+        const r = await chat(env.api, { engine: env.openaiEngine, chatId: null, content: "hello", model });
+        assert.equal(r.status, 200, `${model}: ${r.status}`);
+        assert.equal(env.openai.lastChat().body.model, model);
+        const shown = await env.api.json(`/api/engines/${env.openaiEngine}/show?model=${encodeURIComponent(model)}`);
+        assert.equal(shown.status, 200, `${model}: show ${shown.status}`);
+        await env.api.delete(`/api/chats/${r.id}`);
+      }
+      for (const model of ["", " padded ", "line\nbreak", "x".repeat(301)]) {
+        const r = await env.api.json("/api/chat", { method: "POST", body: { engine: env.openaiEngine, chatId: null, content: "x", model } });
+        assert.equal(r.status, 400, JSON.stringify(model));
+      }
     });
 
     it("usage is counted per engine and model", async () => {

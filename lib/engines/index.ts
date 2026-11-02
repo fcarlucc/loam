@@ -1,3 +1,4 @@
+import { isModelId, isValidModelName } from "../catalog";
 import { getEngineRow, listEngineRows } from "../db";
 import type { EngineConfig } from "../types";
 import { OllamaEngine } from "./ollama";
@@ -75,6 +76,12 @@ export function resolveEngine(id: unknown): Engine | Response {
 export function engineFailure(e: unknown): Response {
   if (e instanceof EngineError) return Response.json({ error: e.message }, { status: e.status });
   throw e;
+}
+
+// Whether `model` is a name this engine can be asked for: Ollama's own name format, or any id an
+// OpenAI-compatible server lists (a file path, an id with @, ...).
+export function acceptsModel(engine: Engine, model: string) {
+  return engine.config.kind === "ollama" ? isValidModelName(model) : isModelId(model);
 }
 
 // Same, for the routes under /api/ollama: the engine must be an Ollama.

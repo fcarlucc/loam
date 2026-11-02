@@ -1,6 +1,6 @@
-import { isValidModelName } from "@/lib/catalog";
+import { isModelId } from "@/lib/catalog";
 import { getDefaults, getKeepAlive } from "@/lib/db";
-import { engineFailure, type ModelMessage, resolveEngine, type StreamEvent } from "@/lib/engines";
+import { acceptsModel, engineFailure, type ModelMessage, resolveEngine, type StreamEvent } from "@/lib/engines";
 import { jsonError, readJson } from "@/lib/http";
 import type { ChatEvent } from "@/lib/types";
 
@@ -8,10 +8,11 @@ import type { ChatEvent } from "@/lib/types";
 // Uses the default settings for new chats (system prompt, temperature, context).
 export async function POST(request: Request) {
   const { engine: engineId, model, content } = await readJson(request);
-  if (typeof model !== "string" || !isValidModelName(model)) return jsonError("Invalid model name", 400);
+  if (typeof model !== "string" || !isModelId(model)) return jsonError("Invalid model name", 400);
   if (typeof content !== "string" || !content.trim() || content.length > 20000) return jsonError("Invalid prompt", 400);
   const engine = resolveEngine(engineId);
   if (engine instanceof Response) return engine;
+  if (!acceptsModel(engine, model)) return jsonError("Invalid model name", 400);
 
   const settings = getDefaults();
   const messages: ModelMessage[] = [

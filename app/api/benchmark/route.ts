@@ -1,6 +1,6 @@
-import { isValidModelName } from "@/lib/catalog";
+import { isModelId } from "@/lib/catalog";
 import { addBenchmark, clearBenchmarks, getKeepAlive, listBenchmarks } from "@/lib/db";
-import { engineFailure, resolveEngine } from "@/lib/engines";
+import { acceptsModel, engineFailure, resolveEngine } from "@/lib/engines";
 import { jsonError, readJson } from "@/lib/http";
 
 // Same prompt and fixed sampling for every run, so results are comparable across models and over time.
@@ -15,12 +15,15 @@ export async function GET() {
 // engine can unload models).
 export async function POST(request: Request) {
   const { engine: engineId, model, cold } = await readJson(request);
-  if (typeof model !== "string" || !isValidModelName(model)) return jsonError("Invalid model name", 400);
+  if (typeof model !== "string" || !isModelId(model)) return jsonError("Invalid model name", 400);
   const engine = resolveEngine(engineId);
   if (engine instanceof Response) return engine;
+  if (!acceptsModel(engine, model)) return jsonError("Invalid model name", 400);
+  // Only an engine that can unload a model measures a cold start.
+  const coldStart = cold === true && !!engine.unload;
 
   try {
-    if (cold === true && engine.unload) await engine.unload(model, request.signal);
+    if (coldStart) await engine.unload!(model, request.signal);
     const { stats, promptPerSecond } = await engine.complete({
       model,
       messages: [{ role: "user", content: PROMPT }],
@@ -31,7 +34,7 @@ export async function POST(request: Request) {
     const result = {
       engine: engine.config.id,
       model,
-      cold: cold === true,
+      cold: coldStart,
       tokens: stats.tokens,
       tokensPerSecond: stats.tokensPerSecond,
       promptPerSecond,

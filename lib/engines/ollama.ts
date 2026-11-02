@@ -1,3 +1,4 @@
+import { engineFetch } from "./fetch";
 import { KEEP_ALIVE_DEFAULT, isThinkValue } from "../settings";
 import { readNdjson } from "../ndjson";
 import type { EngineConfig, InstalledModel, LoadedModel, ModelInfo, ReplyStats } from "../types";
@@ -92,7 +93,7 @@ export class OllamaEngine implements Engine {
 
   private async post(path: string, body: unknown, init: { signal?: AbortSignal; timeoutMs?: number } = {}) {
     try {
-      return await fetch(this.url(path), {
+      return await engineFetch(this.url(path), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -107,7 +108,7 @@ export class OllamaEngine implements Engine {
     const host = new URL(this.config.baseUrl).host;
     try {
       // A stopped server refuses the connection at once; the timeout only covers a busy one (e.g. loading a model).
-      const res = await fetch(this.url("/api/version"), { signal: AbortSignal.timeout(3000), cache: "no-store" });
+      const res = await engineFetch(this.url("/api/version"), { signal: AbortSignal.timeout(3000), cache: "no-store" });
       if (!res.ok) return { running: false, host };
       const data = (await res.json()) as { version?: string };
       return { running: true, version: data.version, host };
@@ -119,7 +120,7 @@ export class OllamaEngine implements Engine {
   async listModels(): Promise<InstalledModel[]> {
     let res: Response;
     try {
-      res = await fetch(this.url("/api/tags"), { signal: AbortSignal.timeout(2000), cache: "no-store" });
+      res = await engineFetch(this.url("/api/tags"), { signal: AbortSignal.timeout(2000), cache: "no-store" });
     } catch {
       throw this.unreachable();
     }
@@ -182,7 +183,7 @@ export class OllamaEngine implements Engine {
   // Context window of a model currently loaded in memory, as Ollama reports it.
   private async loadedContextLength(model: string) {
     try {
-      const res = await fetch(this.url("/api/ps"), { signal: AbortSignal.timeout(1000), cache: "no-store" });
+      const res = await engineFetch(this.url("/api/ps"), { signal: AbortSignal.timeout(1000), cache: "no-store" });
       const { models } = (await res.json()) as PsResponse;
       return models?.find((m) => m.name === model)?.context_length;
     } catch {
@@ -252,7 +253,7 @@ export class OllamaEngine implements Engine {
   async deleteModel(model: string) {
     let res: Response;
     try {
-      res = await fetch(this.url("/api/delete"), {
+      res = await engineFetch(this.url("/api/delete"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model }),
@@ -267,7 +268,7 @@ export class OllamaEngine implements Engine {
   async loadedModels(): Promise<LoadedModel[]> {
     let res: Response;
     try {
-      res = await fetch(this.url("/api/ps"), { signal: AbortSignal.timeout(2000), cache: "no-store" });
+      res = await engineFetch(this.url("/api/ps"), { signal: AbortSignal.timeout(2000), cache: "no-store" });
     } catch {
       throw this.unreachable();
     }

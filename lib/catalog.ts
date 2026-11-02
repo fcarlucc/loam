@@ -39,6 +39,13 @@ export function isValidModelName(name: string) {
   return name.length <= 200 && MODEL_NAME_RE.test(name);
 }
 
+// A model as any engine lists it: an Ollama name, an LM Studio id such as "org/model@q4_k_m", or the file path
+// llama.cpp and MLX report. It only ever travels to the engine inside a JSON body, so any printable text is
+// accepted; the engine says whether the model exists. Ollama's management routes keep the stricter check above.
+export function isModelId(name: string) {
+  return name.length > 0 && name.length <= 300 && name.trim() === name && !/[\u0000-\u001f\u007f]/.test(name);
+}
+
 // Ollama lists untagged models as "name:latest"; use that form so names compare equal.
 export function normalizeModelName(name: string) {
   const trimmed = name.trim();
