@@ -1,3 +1,4 @@
+import type { EngineFeatures } from "./engines/types";
 export type Role = "user" | "assistant";
 
 // Reasoning, for models that can do it: off, on, or a level the model offers (see ModelInfo.thinking).
@@ -24,7 +25,8 @@ export type ReplyStats = {
 export type EngineKind = "ollama" | "openai";
 export type EngineConfig = { id: string; name: string; kind: EngineKind; baseUrl: string; builtin: boolean; remote: boolean };
 // An engine as the model picker sees it: whether it answers right now, and its models.
-export type EngineModels = EngineConfig & { online: boolean; models: string[]; error?: string };
+// `supports` says which per-chat settings and panels apply to it (see lib/engines/types.ts).
+export type EngineModels = EngineConfig & { online: boolean; models: string[]; supports: EngineFeatures; error?: string };
 // What the page sends a message with: a model of one engine.
 export type ModelChoice = { engine: string; model: string };
 

@@ -261,6 +261,21 @@ export function enginesSuite(env) {
       }
     });
 
+    it("only the built-in Ollama at its default address can be started and stopped", async () => {
+      // Refused before anything runs: `brew services` manages the Ollama on port 11434, not this one.
+      const added = await add({ name: "Second Ollama", kind: "ollama", baseUrl: env.ollama.url });
+      assert.equal(added.status, 201, JSON.stringify(added.data));
+      const id = added.data.engine.id;
+      const res = await env.api.json("/api/ollama/power", { method: "POST", body: { engine: id, action: "stop" } });
+      assert.equal(res.status, 400);
+      const listed = (await picker()).find((e) => e.id === id);
+      assert.equal(listed.supports.power, false);
+      assert.equal(listed.supports.contextLength, true);
+      const openai = (await picker()).find((e) => e.id === env.openaiEngine);
+      assert.equal(openai.supports.contextLength, false, "OpenAI-compatible servers decide the context length themselves");
+      assert.equal((await env.api.json(`/api/engines/${id}`, { method: "DELETE" })).status, 200);
+    });
+
     it("usage is counted per engine and model", async () => {
       const a = await chat(env.api, { engine: env.openaiEngine, chatId: null, content: "usage", model: "fake-7b" });
       const b = await chat(env.api, { chatId: null, content: "usage", model: "fake:latest" });

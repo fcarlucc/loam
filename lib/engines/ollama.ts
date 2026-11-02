@@ -1,3 +1,4 @@
+import { isHomebrewOllamaUrl } from "./presets";
 import { engineFetch } from "./fetch";
 import { KEEP_ALIVE_DEFAULT, isThinkValue } from "../settings";
 import { readNdjson } from "../ndjson";
@@ -73,8 +74,9 @@ export class OllamaEngine implements Engine {
   readonly supports: EngineFeatures;
 
   constructor(readonly config: EngineConfig) {
-    // Starting and stopping goes through Homebrew's service on this machine: not for a remote Ollama.
-    this.supports = { ...OLLAMA_FEATURES, power: !config.remote };
+    // Starting and stopping runs `brew services`, which manages the one Ollama at the default address: only the
+    // built-in engine pointing there can use it, never another Ollama (it would start or stop the wrong one).
+    this.supports = { ...OLLAMA_FEATURES, power: config.builtin && isHomebrewOllamaUrl(config.baseUrl) };
   }
 
   private url(path: string) {

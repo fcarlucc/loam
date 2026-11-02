@@ -738,6 +738,7 @@ export function Chat({
         open={settingsOpen}
         settings={settings}
         modelInfo={modelInfo}
+        contextLength={engine?.supports.contextLength ?? true}
         systemRef={systemPromptRef}
         onChange={changeSettings}
         onSaveDefaults={() => onSaveDefaults(settings)}

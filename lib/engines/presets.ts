@@ -32,6 +32,16 @@ export function parseEngineName(value: unknown): string | null {
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+// Is this the address Homebrew's Ollama service listens on? Only that Ollama is started and stopped from the app.
+export function isHomebrewOllamaUrl(url: string) {
+  try {
+    const u = new URL(url);
+    return LOOPBACK_HOSTS.has(u.hostname.toLowerCase()) && u.port === "11434" && (u.pathname === "/" || u.pathname === "");
+  } catch {
+    return false;
+  }
+}
+
 // Is this URL on this machine? Only loopback engines are accepted unless remote ones were allowed explicitly.
 export function isLoopbackUrl(url: string) {
   try {

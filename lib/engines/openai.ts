@@ -181,7 +181,11 @@ export class OpenAIEngine implements Engine {
       if (chunk.error !== undefined) throw new Error(errorMessage(chunk) ?? `${this.config.name} reported an error.`);
       const delta = chunk.choices?.[0]?.delta;
       const thought = delta?.reasoning_content ?? delta?.reasoning;
-      if (thought) yield { type: "thinking", text: thought };
+      // Generation starts with the first token of either kind: completion_tokens counts the reasoning too.
+      if (thought) {
+        first ??= Date.now();
+        yield { type: "thinking", text: thought };
+      }
       if (delta?.content) {
         first ??= Date.now();
         yield { type: "content", text: delta.content };

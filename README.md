@@ -155,7 +155,7 @@ skips itself when Ollama is already running.
 
 | Variable | Default | |
 | --- | --- | --- |
-| `OLLAMA_HOST_URL` | `http://localhost:11434` | Where the built-in Ollama is (editing it in **Engines** takes precedence) |
+| `OLLAMA_HOST_URL` | `http://localhost:11434` | Where the built-in Ollama is (editing it in **Engines** takes precedence). On another machine it also needs `ALLOW_REMOTE_ENGINES=1`. Start and stop from the sidebar work only at the default address (Homebrew's service) |
 | `OLLAMA_WRAP_DATA_DIR` | `data/` | Where chats and settings are stored |
 | `ALLOW_REMOTE_ENGINES` | unset | `1` accepts engine URLs on other machines (see [Engines](#engines)) |
 

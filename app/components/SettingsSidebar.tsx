@@ -16,6 +16,7 @@ export function SettingsSidebar({
   open,
   settings,
   modelInfo,
+  contextLength = true,
   systemRef,
   onChange,
   onSaveDefaults,
@@ -24,6 +25,8 @@ export function SettingsSidebar({
   open: boolean;
   settings: ChatSettings;
   modelInfo: ModelInfo | null;
+  // Whether the chat's engine applies a per-chat context length (OpenAI-compatible servers decide it themselves).
+  contextLength?: boolean;
   systemRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (settings: ChatSettings) => void;
   onSaveDefaults: () => Promise<boolean>;
@@ -125,30 +128,32 @@ export function SettingsSidebar({
               </div>
             </div>
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium">Context length</span>
-              <select
-                value={settings.contextLength ?? ""}
-                onChange={(e) => (e.target.value ? update({ contextLength: Number(e.target.value) }) : update({}, "contextLength"))}
-                className={fieldClass}
-              >
-                <option value="">Automatic{max !== null ? ` (up to ${formatTokens(max)})` : ""}</option>
-                {choices.map((n) => (
-                  <option key={n} value={n}>
-                    {formatTokens(n)} tokens
-                  </option>
-                ))}
-                {tooLarge && (
-                  <option value={settings.contextLength}>
-                    {formatTokens(settings.contextLength!)} tokens (more than this model supports)
-                  </option>
-                )}
-              </select>
-              <span className="text-xs text-muted">
-                How much of the conversation the model can see. Larger values use more memory. Changing it reloads the model, and
-                so does switching between chats with different values.
-              </span>
-            </label>
+            {contextLength && (
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium">Context length</span>
+                <select
+                  value={settings.contextLength ?? ""}
+                  onChange={(e) => (e.target.value ? update({ contextLength: Number(e.target.value) }) : update({}, "contextLength"))}
+                  className={fieldClass}
+                >
+                  <option value="">Automatic{max !== null ? ` (up to ${formatTokens(max)})` : ""}</option>
+                  {choices.map((n) => (
+                    <option key={n} value={n}>
+                      {formatTokens(n)} tokens
+                    </option>
+                  ))}
+                  {tooLarge && (
+                    <option value={settings.contextLength}>
+                      {formatTokens(settings.contextLength!)} tokens (more than this model supports)
+                    </option>
+                  )}
+                </select>
+                <span className="text-xs text-muted">
+                  How much of the conversation the model can see. Larger values use more memory. Changing it reloads the model, and
+                  so does switching between chats with different values.
+                </span>
+              </label>
+            )}
           </div>
 
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border p-4">
