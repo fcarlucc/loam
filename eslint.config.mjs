@@ -10,9 +10,13 @@ const eslintConfig = defineConfig([
     // Default ignores of eslint-config-next:
     ".next/**",
     ".next-e2e/**",
+    ".next-ui/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Browser test output (npm run test:ui)
+    "test-results/**",
+    "playwright-report/**",
   ]),
 ]);
 

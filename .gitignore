@@ -43,3 +43,8 @@ next-env.d.ts
 
 # local chat database
 /data/
+
+# browser tests (npm run test:ui)
+/.next-ui/
+/test-results/
+/playwright-report/

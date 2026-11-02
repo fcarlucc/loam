@@ -467,7 +467,9 @@ export function Chat({
           >
             <MenuIcon />
           </button>
-          <p className="min-w-0 flex-1 truncate text-sm font-medium text-muted">{title}</p>
+          <p data-testid="chat-title" className="min-w-0 flex-1 truncate text-sm font-medium text-muted">
+            {title}
+          </p>
           <button
             ref={settingsToggleRef}
             onClick={toggleSettings}
@@ -534,7 +536,7 @@ export function Chat({
                   }
                   return (
                     <Fragment key={key}>
-                      <div data-message-id={m.id} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
+                      <div data-testid="user-message" data-message-id={m.id} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
                         {m.content && (
                           <div
                             className={`whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg transition-shadow ${
@@ -565,6 +567,7 @@ export function Chat({
                 return (
                   <Fragment key={key}>
                     <div
+                      data-testid="assistant-message"
                       data-message-id={m.id}
                       className={`group/msg max-w-[95%] rounded-xl transition-shadow ${
                         highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""

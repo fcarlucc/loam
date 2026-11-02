@@ -94,6 +94,7 @@ Then open the address printed in the terminal: <http://localhost:3000>, or the n
 | `npm run build` / `npm start` | Production build on <http://127.0.0.1:3000>; Ollama is managed from the sidebar |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run test:api` | API tests against a fake Ollama, no model needed |
+| `npm run test:ui` | Browser tests of the UI, against the same fake Ollama |
 | `npm run test:e2e` | API tests + lifecycle tests with Homebrew's real Ollama |
 
 Pass `-p <port>` (e.g. `npm run dev -- -p 4000`) to choose the port yourself.
@@ -149,6 +150,10 @@ this machine: that rule is tested too.
 `tests/e2e/migration.test.mjs` opens a database created by the version before engines existed, lets the app migrate
 it, and checks that every chat, message, version, attachment and search hit is still there, now attributed to Ollama.
 
+`tests/ui` (Playwright, Chromium) starts the app and the fake Ollama the same way and drives the page as a user would:
+sending and stopping a reply, versions, branching, the chat list and search, chat settings, attachments, reasoning,
+Ollama going offline and back, themes. The page is kept off the internet while they run.
+
 `tests/e2e/lifecycle.test.mjs` uses Homebrew's real Ollama service: it checks that `npm run dev` starts it and stops it
 on Ctrl+C, when the terminal is closed and when Next crashes, leaving no process behind. It restarts that service, so it
 skips itself when Ollama is already running.
@@ -181,6 +186,7 @@ lib/db.ts              SQLite schema, migrations and queries (messages form a tr
 proxy.ts               request guard for /api
 scripts/dev.mjs        starts and stops Ollama around `next dev`
 tests/e2e              end-to-end tests: API against a fake Ollama, lifecycle against the real one
+tests/ui               browser tests of the UI (Playwright), against the fake Ollama
 ```
 
 ## Roadmap
