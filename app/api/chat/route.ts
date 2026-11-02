@@ -1,5 +1,5 @@
 import { inlineFiles, parseAttachments } from "@/lib/attachments";
-import { isValidModelName } from "@/lib/catalog";
+import { isModelId } from "@/lib/catalog";
 import {
   addAttachments,
   addMessage,
@@ -15,11 +15,10 @@ import {
   transaction,
   updateChat,
 } from "@/lib/db";
+import { acceptsModel, engineFailure, type ModelMessage, resolveEngine, type StreamEvent } from "@/lib/engines";
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
-import { readNdjson } from "@/lib/ndjson";
-import { type ChatChunk, loadedContextLength, modelCapabilities, OLLAMA_URL, ollamaError, toStats } from "@/lib/ollama";
-import { KEEP_ALIVE_DEFAULT, parseSettings } from "@/lib/settings";
+import { parseSettings } from "@/lib/settings";
 import { makeTitle } from "@/lib/title";
 import type { ChatEvent, ChatMessage, ReplyStats } from "@/lib/types";
 
@@ -28,12 +27,13 @@ import type { ChatEvent, ChatMessage, ReplyStats } from "@/lib/types";
 //   { content, editOf: id }    new version of a user message, then a reply to it
 //   { regenerate: id }         new version of a reply
 //   { retry: true }            reply to a user message that has none
-// Nothing is written until Ollama accepts the request, so a failed send leaves no trace. A new chat is
-// created at that point and its id is returned in the X-Chat-Id header.
+// `engine` names the engine to use (the built-in Ollama when missing). Nothing is written until the engine
+// accepts the request, so a failed send leaves no trace. A new chat is created at that point and its id is
+// returned in the X-Chat-Id header.
 export async function POST(request: Request) {
   const body = await readJson(request);
   const chatId = body.chatId ?? null;
-  const model = typeof body.model === "string" && isValidModelName(body.model) ? body.model : "";
+  const model = typeof body.model === "string" && isModelId(body.model) ? body.model : "";
   const content = typeof body.content === "string" ? body.content.trim() : "";
   const editOf = body.editOf ?? null;
   const regenerate = body.regenerate ?? null;
@@ -53,6 +53,9 @@ export async function POST(request: Request) {
   ) {
     return jsonError("Invalid request", 400);
   }
+  const engine = resolveEngine(body.engine);
+  if (engine instanceof Response) return engine;
+  if (!acceptsModel(engine, model)) return jsonError("Invalid request", 400);
   const chat = chatId === null ? undefined : getChat(chatId);
   if (chatId !== null && !chat) return jsonError("Chat not found", 404);
   if (!chat && (!sending || editOf !== null)) return jsonError("Invalid request", 400);
@@ -79,71 +82,58 @@ export async function POST(request: Request) {
     userParent = getLeafId(chat.id);
   }
   const branchEnd = sending ? userParent : replyParent;
-  // Files travel with their message on every turn: text inside the message, images through `images` for
-  // models that can see. Ollama refuses images on the others, so there they are left out: the model just
-  // doesn't see them (the chat may have moved to another model since).
-  const capabilities = await modelCapabilities(model);
-  const canSee = capabilities?.includes("vision") ?? true; // unknown (Ollama unreachable?): let Ollama decide
+  // Files travel with their message on every turn: text inside the message, images as images for models
+  // that can see. Engines refuse images on the others, so there they are left out: the model just doesn't
+  // see them (the chat may have moved to another model since).
+  const capabilities = await engine.capabilities(model);
+  const canSee = capabilities?.vision ?? true; // unknown (engine unreachable, or one that can't tell): let the engine decide
   if (!canSee && attachments.some((a) => a.kind === "image")) return jsonError(`${model} can't see images`, 400);
-  const toModelMessage = (m: Pick<ChatMessage, "id" | "role" | "content" | "attachments">) => {
+  const toModelMessage = (m: Pick<ChatMessage, "id" | "role" | "content" | "attachments">): ModelMessage => {
     if (!m.attachments?.length || m.id === undefined) return { role: m.role, content: m.content };
     const { files, images } = attachmentContents(m.id);
     return { role: m.role, content: inlineFiles(m.content, files), ...(canSee && images.length ? { images } : {}) };
   };
-  const history: { role: string; content: string; images?: string[] }[] =
-    chat && branchEnd !== null ? getPath(chat.id, branchEnd).map(toModelMessage) : [];
+  const history: ModelMessage[] = chat && branchEnd !== null ? getPath(chat.id, branchEnd).map(toModelMessage) : [];
   if (sending) {
     // An edit without new files keeps the files of the message it replaces (they are copied when it is saved).
     const kept = editOf !== null && !attachments.length ? attachmentContents(editOf) : undefined;
     const files = kept?.files ?? attachments.filter((a) => a.kind === "text").map((a) => ({ name: a.name, text: a.data }));
-    const images = kept?.images ?? attachments.filter((a) => a.kind === "image").map((a) => a.data);
+    const images = kept?.images ?? attachments.filter((a) => a.kind === "image").map((a) => ({ data: a.data, type: a.type }));
     history.push({ role: "user", content: inlineFiles(content, files), ...(canSee && images.length ? { images } : {}) });
   }
   if (history.at(-1)?.role !== "user") return jsonError("Nothing to reply to", 400);
 
-  const options = {
-    ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
-    ...(settings.contextLength !== undefined ? { num_ctx: settings.contextLength } : {}),
-  };
-  const keepAlive = getKeepAlive();
-  const messages = settings.system ? [{ role: "system", content: settings.system }, ...history] : history;
-  // Reasoning off, on or at a level, only for models that can reason: Ollama refuses `think` on the others.
-  const think = settings.think !== undefined && capabilities?.includes("thinking") ? settings.think : undefined;
+  const messages: ModelMessage[] = settings.system ? [{ role: "system", content: settings.system }, ...history] : history;
 
   const upstream = new AbortController();
-  // The client left (other chat, closed tab): stop Ollama too, even while the model is still loading.
+  // The client left (other chat, closed tab): stop the engine too, even while the model is still loading.
   request.signal.addEventListener("abort", () => upstream.abort());
 
-  let res: Response;
+  let events: AsyncIterable<StreamEvent>;
   try {
-    res = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: true,
-        ...(Object.keys(options).length ? { options } : {}),
-        ...(think !== undefined ? { think } : {}),
-        ...(keepAlive !== KEEP_ALIVE_DEFAULT ? { keep_alive: keepAlive } : {}),
-      }),
+    events = await engine.chat({
+      model,
+      messages,
+      temperature: settings.temperature,
+      contextLength: settings.contextLength,
+      think: settings.think,
+      keepAlive: getKeepAlive(),
       signal: upstream.signal,
     });
-  } catch {
-    return jsonError("Cannot reach Ollama. Is it running?", 502);
+  } catch (e) {
+    return engineFailure(e);
   }
-  if (!res.ok || !res.body) return jsonError(await ollamaError(res), 502);
-  const source = res.body;
 
+  const engineId = engine.config.id;
   const placeholder = makeTitle(content || attachments[0]?.name || ""); // until the model names the chat
   const { id, answering } = transaction(() => {
-    const id = chat?.id ?? createChat(placeholder, model, settings);
+    const id = chat?.id ?? createChat(placeholder, engineId, model, settings);
     const answering = sending ? addMessage(id, "user", content, userParent) : replyParent!;
     // The files sent with the message; an edit without new files keeps those of the message it replaces.
     if (sending && attachments.length) addAttachments(answering, attachments);
     else if (sending && editOf !== null) copyAttachments(editOf, answering);
     const retitle = chat?.title === DEFAULT_TITLE && sending && editOf === null;
-    updateChat(id, { model, settings, ...(retitle ? { title: placeholder } : {}) });
+    updateChat(id, { engine: engineId, model, settings, ...(retitle ? { title: placeholder } : {}) });
     return { id, answering };
   });
 
@@ -167,7 +157,7 @@ export async function POST(request: Request) {
     if (!reply) return; // nothing generated: a regenerated reply keeps its previous version on screen
     try {
       // Also keeps partial replies (without stats).
-      addMessage(id, "assistant", reply, answering, { model, stats, ...(thinking ? { thinking } : {}) });
+      addMessage(id, "assistant", reply, answering, { engine: engineId, model, stats, ...(thinking ? { thinking } : {}) });
     } catch {
       // The chat was deleted while the reply was streaming: nothing to keep.
     }
@@ -178,27 +168,23 @@ export async function POST(request: Request) {
     async start(controller) {
       const send = (event: ChatEvent) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       try {
-        let last: ChatChunk | undefined;
+        let timings: ReplyStats | undefined;
         let thinkingFrom: number | undefined; // when the first thought arrived, and when the reply itself began
         let replyFrom: number | undefined;
-        for await (const part of readNdjson<ChatChunk>(source)) {
-          if (part.error) throw new Error(part.error);
-          const thought = part.message?.thinking;
-          if (thought) {
+        for await (const event of events) {
+          if (event.type === "thinking") {
             thinkingFrom ??= Date.now();
-            thinking += thought;
-            send({ type: "thinking", text: thought });
-          }
-          const text = part.message?.content;
-          if (text) {
+            thinking += event.text;
+            send({ type: "thinking", text: event.text });
+          } else if (event.type === "content") {
             replyFrom ??= Date.now();
-            reply += text;
-            send({ type: "delta", text });
+            reply += event.text;
+            send({ type: "delta", text: event.text });
+          } else {
+            timings = event.stats;
           }
-          if (part.done) last = part;
         }
         const endedAt = Date.now();
-        const timings = last ? toStats(last, (await loadedContextLength(model)) ?? settings.contextLength) : undefined;
         const stats = timings && thinkingFrom !== undefined ? { ...timings, thinkingMs: (replyFrom ?? endedAt) - thinkingFrom } : timings;
         save(stats);
         send({ type: "done", stats });
@@ -215,7 +201,7 @@ export async function POST(request: Request) {
         release();
       }
     },
-    // The client disconnected: abort Ollama and keep what was generated so far.
+    // The client disconnected: abort the engine and keep what was generated so far.
     cancel() {
       upstream.abort();
       save();

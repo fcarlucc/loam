@@ -1,71 +1,51 @@
-import { isValidModelName } from "@/lib/catalog";
+import { isModelId } from "@/lib/catalog";
 import { addBenchmark, clearBenchmarks, getKeepAlive, listBenchmarks } from "@/lib/db";
+import { acceptsModel, engineFailure, resolveEngine } from "@/lib/engines";
 import { jsonError, readJson } from "@/lib/http";
-import { OLLAMA_URL, ollamaError } from "@/lib/ollama";
-import { KEEP_ALIVE_DEFAULT } from "@/lib/settings";
 
 // Same prompt and fixed sampling for every run, so results are comparable across models and over time.
 const PROMPT = "Explain in about 150 words how a refrigerator keeps food cold.";
-const OPTIONS = { temperature: 0, seed: 42, num_predict: 300 };
-
-type Timings = {
-  eval_count?: number;
-  eval_duration?: number;
-  prompt_eval_count?: number;
-  prompt_eval_duration?: number;
-  load_duration?: number;
-  total_duration?: number;
-};
-
-const perSecond = (count = 0, ns = 0) => (ns > 0 ? Math.round((count / (ns / 1e9)) * 10) / 10 : 0);
+const SAMPLING = { temperature: 0, seed: 42, maxTokens: 300 };
 
 export async function GET() {
   return Response.json({ results: listBenchmarks(), prompt: PROMPT });
 }
 
-// Runs the benchmark for one model; `cold` unloads it first so the load time is measured too.
+// Runs the benchmark for one model; `cold` unloads it first so the load time is measured too (where the
+// engine can unload models).
 export async function POST(request: Request) {
-  const { model, cold } = await readJson(request);
-  if (typeof model !== "string" || !isValidModelName(model)) return jsonError("Invalid model name", 400);
-  const keepAlive = getKeepAlive();
+  const { engine: engineId, model, cold } = await readJson(request);
+  if (typeof model !== "string" || !isModelId(model)) return jsonError("Invalid model name", 400);
+  const engine = resolveEngine(engineId);
+  if (engine instanceof Response) return engine;
+  if (!acceptsModel(engine, model)) return jsonError("Invalid model name", 400);
+  // Only an engine that can unload a model measures a cold start.
+  const coldStart = cold === true && !!engine.unload;
 
   try {
-    if (cold === true) {
-      await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, keep_alive: 0 }),
-        signal: request.signal,
-      });
-    }
-    const res = await fetch(`${OLLAMA_URL}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: PROMPT }],
-        stream: false,
-        options: OPTIONS,
-        ...(keepAlive !== KEEP_ALIVE_DEFAULT ? { keep_alive: keepAlive } : {}),
-      }),
-      signal: request.signal, // stop button: Ollama stops too
-    });
-    if (!res.ok) return jsonError(await ollamaError(res), 502);
-    const t = (await res.json()) as Timings;
-    const result = {
+    if (coldStart) await engine.unload!(model, request.signal);
+    const { stats, promptPerSecond } = await engine.complete({
       model,
-      cold: cold === true,
-      tokens: t.eval_count ?? 0,
-      tokensPerSecond: perSecond(t.eval_count, t.eval_duration),
-      promptPerSecond: perSecond(t.prompt_eval_count, t.prompt_eval_duration),
-      loadMs: Math.round((t.load_duration ?? 0) / 1e6),
-      totalMs: Math.round((t.total_duration ?? 0) / 1e6),
+      messages: [{ role: "user", content: PROMPT }],
+      ...SAMPLING,
+      keepAlive: getKeepAlive(),
+      signal: request.signal, // stop button: the engine stops too
+    });
+    const result = {
+      engine: engine.config.id,
+      model,
+      cold: coldStart,
+      tokens: stats.tokens,
+      tokensPerSecond: stats.tokensPerSecond,
+      promptPerSecond,
+      loadMs: stats.loadMs,
+      totalMs: stats.totalMs,
     };
     addBenchmark(result);
     return Response.json({ result });
-  } catch {
+  } catch (e) {
     if (request.signal.aborted) return jsonError("Stopped", 499);
-    return jsonError("Cannot reach Ollama. Is it running?", 502);
+    return engineFailure(e);
   }
 }
 

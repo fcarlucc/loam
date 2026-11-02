@@ -34,7 +34,10 @@ internet while they run. When a test fails, `playwright-report/` holds a trace o
 
 - **Privacy first.** No telemetry, no remote assets, no new outbound connections. A change that touches the network or
   the API must keep the guards in `proxy.ts` and extend the tests in `tests/e2e/suites/security.mjs`.
-- **Every API change comes with tests** in `tests/e2e`, against the fake Ollama (`tests/e2e/helpers/fake-ollama.mjs`).
+- **Every API change comes with tests** in `tests/e2e`, against the fake Ollama (`tests/e2e/helpers/fake-ollama.mjs`)
+  and the fake OpenAI-compatible server (`tests/e2e/helpers/fake-openai.mjs`). The app only ever talks to engines
+  through `lib/engines` (see [`docs/ENGINES.md`](docs/ENGINES.md)); a new kind of engine gets its own fake and runs
+  the shared chat suite.
 - **A change to the UI keeps `npm run test:ui` green**, and a new flow gets a test in `tests/ui`. Target elements by
   their role and accessible name; add a `data-testid` only where there is no such name.
 - **Never use real chats** in tests, screenshots or bug reports. Tests use a throwaway database

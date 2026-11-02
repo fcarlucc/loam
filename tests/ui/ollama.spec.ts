@@ -11,7 +11,7 @@ test("when Ollama is offline the app says so, and recovers when it is back", asy
     await expect(ollamaStatus(page)).toHaveText("Ollama is stopped", { timeout: 15_000 });
     await expect(page.getByRole("button", { name: "Start Ollama" })).toBeVisible();
     await expect(composer(page)).toBeDisabled();
-    await expect(composer(page)).toHaveAttribute("placeholder", "Start Ollama to write");
+    await expect(composer(page)).toHaveAttribute("placeholder", "Ollama is stopped");
     await expect(sendButton(page)).toBeDisabled();
     await expect(page.getByText("Ollama is stopped: start it from the sidebar to begin.")).toBeVisible();
   } finally {

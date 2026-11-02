@@ -6,7 +6,7 @@ import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
 import { hasCustomSettings } from "@/lib/settings";
-import type { ChatEvent, ChatMessage, ChatSettings as Settings, ChatSummary, ModelInfo, NewAttachment, Versions } from "@/lib/types";
+import type { ChatEvent, ChatMessage, ChatSettings as Settings, ChatSummary, EngineModels, ModelChoice, ModelInfo, NewAttachment, Versions } from "@/lib/types";
 import { acceptFor, AttachmentChips, metaOf, readFiles, textTokens } from "./Attachments";
 import { CopyButton } from "./CopyButton";
 import {
@@ -28,6 +28,7 @@ import { Reasoning } from "./Reasoning";
 import { ReasoningPicker } from "./ReasoningPicker";
 import { nearlyFull, StatsLine } from "./StatsLine";
 import { SETTINGS_SIDEBAR_ID, SettingsSidebar } from "./SettingsSidebar";
+import { offlineLabel } from "./useEngines";
 
 const SUGGESTIONS = [
   "Explain a hard concept in simple terms",
@@ -69,10 +70,9 @@ export function Chat({
   onOpenChat,
   draft,
   onDraftChange,
-  ollamaRunning,
-  models,
-  model,
-  onModelChange,
+  engines,
+  choice,
+  onChoose,
   onModelInstalled,
   onChatCreated,
   onChatsChanged,
@@ -91,11 +91,10 @@ export function Chat({
   onOpenChat: (id: number) => void;
   draft: string;
   onDraftChange: Dispatch<SetStateAction<string>>;
-  ollamaRunning: boolean;
-  models: string[];
-  model: string;
-  onModelChange: (model: string) => void;
-  onModelInstalled: (model: string) => void;
+  engines: EngineModels[];
+  choice: ModelChoice;
+  onChoose: (choice: ModelChoice) => void;
+  onModelInstalled: (engine: string, model: string) => void;
   onChatCreated: (id: number) => void;
   onChatsChanged: () => void;
   onOpenSidebar: () => void;
@@ -227,7 +226,11 @@ export function Chat({
   const effectiveSettings: Settings =
     settings.contextLength !== undefined && max && settings.contextLength > max ? { ...settings, contextLength: max } : settings;
 
-  const ready = ollamaRunning && !!model && !streaming && !loading;
+  // The engine and model messages go to; nothing can be sent while the engine doesn't answer.
+  const engine = engines.find((e) => e.id === choice.engine);
+  const online = engine?.online ?? false;
+  const model = choice.model;
+  const ready = online && !!model && !streaming && !loading;
   const last = messages.at(-1);
   const canRetry = !streaming && chatId !== null && last?.role === "user";
   // In a branched chat, the last message copied from the chat it came from (-1 elsewhere).
@@ -245,7 +248,7 @@ export function Chat({
 
   // Images are refused up front for a model known not to see them; while the model's details aren't known
   // (none picked yet, or still loading) they are taken, and the server refuses them when the message is sent.
-  const canSee = modelInfo ? modelInfo.capabilities.includes("vision") : undefined;
+  const canSee = modelInfo?.capabilities ? modelInfo.capabilities.includes("vision") : undefined;
 
   // Files picked, dropped or pasted join the composer; the ones that can't are named under it.
   async function addFiles(files: File[]) {
@@ -358,6 +361,7 @@ export function Chat({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           chatId,
+          engine: choice.engine,
           model,
           settings: effectiveSettings,
           ...(action.kind === "send"
@@ -490,7 +494,11 @@ export function Chat({
               <div>
                 <h1 className="text-3xl font-semibold tracking-tight">How can I help?</h1>
                 <p className="mt-2 text-muted">
-                  {ollamaRunning ? "Your local model is ready." : "Ollama is stopped: start it from the sidebar to begin."}
+                  {online
+                    ? "Your local model is ready."
+                    : engine?.builtin
+                      ? "Ollama is stopped: start it from the sidebar to begin."
+                      : `${offlineLabel(engine)}: start it, or pick a model from another engine.`}
                 </p>
               </div>
               <div className="grid w-full gap-2 sm:grid-cols-2">
@@ -654,8 +662,8 @@ export function Chat({
                 void addFiles(files);
               }}
               rows={1}
-              placeholder={ollamaRunning ? (dragging ? "Drop the files here" : "Write a message…") : "Start Ollama to write"}
-              disabled={!ollamaRunning}
+              placeholder={online ? (dragging ? "Drop the files here" : "Write a message…") : `${offlineLabel(engine)}`}
+              disabled={!online}
               aria-label="Message"
               className="max-h-[200px] w-full resize-none bg-transparent px-2 py-2 text-[15px] outline-none placeholder:text-muted disabled:cursor-not-allowed"
             />
@@ -693,21 +701,14 @@ export function Chat({
                 />
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={!ollamaRunning}
+                  disabled={!online}
                   aria-label="Attach files"
                   title={canSee === false ? "Attach text files (this model can't see images)" : "Attach text files or images"}
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-fg disabled:opacity-40"
                 >
                   <PaperclipIcon width={16} height={16} />
                 </button>
-                <ModelPicker
-                  models={models}
-                  model={model}
-                  ollamaRunning={ollamaRunning}
-                  disabled={streaming}
-                  onChange={onModelChange}
-                  onInstalled={onModelInstalled}
-                />
+                <ModelPicker engines={engines} choice={choice} disabled={streaming} onChange={onChoose} onInstalled={onModelInstalled} />
                 {modelInfo?.thinking && (
                   <ReasoningPicker options={modelInfo.thinking} value={settings.think} disabled={streaming} onChange={changeThink} />
                 )}
@@ -740,6 +741,7 @@ export function Chat({
         open={settingsOpen}
         settings={settings}
         modelInfo={modelInfo}
+        contextLength={engine?.supports.contextLength ?? true}
         systemRef={systemPromptRef}
         onChange={changeSettings}
         onSaveDefaults={() => onSaveDefaults(settings)}

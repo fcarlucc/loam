@@ -13,20 +13,25 @@ enforced, and how to report a problem.
 - **Replies can't phone home.** Images in model replies are shown as links and never loaded automatically.
 - **Deleted means deleted.** Deleting a chat also wipes its text from the database files (SQLite `secure_delete`).
 
-The only outbound connections are the ones you ask for (downloading a model through Ollama) and Next.js fetching the
-Geist font files once when it compiles.
+The only outbound connections are to the engines you configured (Ollama, LM Studio, llama.cpp, MLX…), which must be
+on this machine (`localhost`, `127.0.0.1` or `[::1]`) unless you start the app with `ALLOW_REMOTE_ENGINES=1`, and
+the ones you ask for (downloading a model through Ollama). Next.js also fetches the Geist font files once when it
+compiles.
 
 ## How it is checked
 
 The promise is tested, not just stated. `npm run test:api` starts the app as a user would, with a throwaway database and
-a fake Ollama, and checks the loopback-only binding, the `Host` and `Origin` guards on every API route (new routes
-included), and that deleted chats are gone from the files. The tests run on every push (see the CI badge in the README).
+a fake Ollama and a fake OpenAI-compatible server, and checks the loopback-only binding, the `Host` and `Origin`
+guards on every API route (new routes included), that engine URLs on other machines are refused, and that deleted
+chats are gone from the files. The tests run on every push (see the CI badge in the README).
 
 ## Known limits
 
 - Ollama's own API (port 11434) also listens on the loopback only, but by default Ollama lets any page served from
   `localhost` call it directly (`OLLAMA_ORIGINS`). Another local web app could use your models; this app can't change
-  that.
+  that. The same goes for the other engines' servers: how they are exposed is up to them.
+- With `ALLOW_REMOTE_ENGINES=1`, messages sent to a remote engine leave this machine, over whatever connection that
+  engine's URL uses. The app marks such engines as remote; it can't make the connection private.
 - If the app's process is killed with `kill -9`, it can't stop Ollama, which keeps running until you stop it.
 - Anyone with access to your user account can read the database file, like any other file you own.
 

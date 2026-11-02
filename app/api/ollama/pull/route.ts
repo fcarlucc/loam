@@ -1,24 +1,20 @@
 import { isValidModelName } from "@/lib/catalog";
+import { engineFailure, resolveOllama } from "@/lib/engines";
 import { jsonError, readJson } from "@/lib/http";
-import { OLLAMA_URL, ollamaError } from "@/lib/ollama";
 
 // Downloads a model and relays Ollama's NDJSON progress. Closing the request aborts the download.
 export async function POST(request: Request) {
-  const { name } = await readJson(request);
+  const body = await readJson(request);
+  const { name } = body;
   if (typeof name !== "string" || !isValidModelName(name)) return jsonError("Invalid model name", 400);
+  const engine = resolveOllama(body.engine);
+  if (engine instanceof Response) return engine;
 
-  let res: Response;
+  let progress: ReadableStream<Uint8Array>;
   try {
-    res = await fetch(`${OLLAMA_URL}/api/pull`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: name, stream: true }),
-      signal: request.signal,
-    });
-  } catch {
-    return jsonError("Cannot reach Ollama. Is it running?", 502);
+    progress = await engine.pull!(name, request.signal);
+  } catch (e) {
+    return engineFailure(e);
   }
-  if (!res.ok || !res.body) return jsonError(await ollamaError(res), 502);
-
-  return new Response(res.body, { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
+  return new Response(progress, { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
 }

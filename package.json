@@ -13,7 +13,7 @@
     "lint": "eslint",
     "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\"",
     "typecheck": "next typegen && tsc --noEmit",
-    "test:api": "node --test --test-concurrency=1 tests/e2e/api.test.mjs",
+    "test:api": "node --test --test-concurrency=1 tests/e2e/api.test.mjs tests/e2e/migration.test.mjs",
     "test:ui": "playwright test"
   },
   "dependencies": {

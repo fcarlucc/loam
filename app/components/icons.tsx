@@ -103,3 +103,6 @@ export const FileIcon = (p: SVGProps<SVGSVGElement>) => (
 export const BranchIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M6 3v12" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></svg>
 );
+export const PlugIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M9 2v6M15 2v6M6 8h12v3a6 6 0 0 1-12 0V8zM12 17v5" /></svg>
+);

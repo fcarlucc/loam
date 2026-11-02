@@ -1,31 +1,41 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { ChatSettings, ChatSummary, ModelInfo } from "@/lib/types";
+import { BUILTIN_OLLAMA_ID } from "@/lib/engines/presets";
+import type { ChatSettings, ChatSummary, EngineModels, ModelChoice, ModelInfo } from "@/lib/types";
 import { Chat } from "./Chat";
 import { CompareView } from "./CompareView";
 import { DashboardView } from "./DashboardView";
+import { EnginesDialog } from "./EnginesDialog";
 import { ModelsDialog } from "./ModelsDialog";
 import { useOllamaStatus } from "./OllamaStatus";
 import { Sidebar } from "./Sidebar";
+import { useEngines } from "./useEngines";
 
+const ENGINE_KEY = "engine";
 const MODEL_KEY = "model";
 const SETTINGS_OPEN_KEY = "settingsOpen";
 
-function savedModel() {
+// The model used last time. Installs from before engines existed only saved the model: it was Ollama's.
+function savedChoice(): ModelChoice | null {
   try {
-    return localStorage.getItem(MODEL_KEY);
+    const model = localStorage.getItem(MODEL_KEY);
+    return model ? { engine: localStorage.getItem(ENGINE_KEY) ?? BUILTIN_OLLAMA_ID, model } : null;
   } catch {
     return null;
   }
 }
 
+const offers = (engines: EngineModels[], c: ModelChoice) => engines.some((e) => e.id === c.engine && e.models.includes(c.model));
+
 export function AppShell() {
-  const ollama = useOllamaStatus();
-  const running = ollama.status?.running ?? false;
+  const { engines, loaded: enginesLoaded, refresh: refreshEngines } = useEngines();
+  // After Ollama is started or stopped, the model picker and the engines card should follow at once.
+  const ollama = useOllamaStatus(refreshEngines);
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [enginesOpen, setEnginesOpen] = useState(false);
   // What the main area shows besides a chat.
   const [screen, setScreen] = useState<"chat" | "compare" | "dashboard">("chat");
   // Lives here, not in Chat, so the settings sidebar stays open when another chat is opened.
@@ -43,11 +53,11 @@ export function AppShell() {
   // `focus` is a message to scroll to and highlight once the chat is open (from search).
   const [view, setView] = useState<{ key: number; id: number | null; focus?: number | null }>({ key: 0, id: null });
   const [draft, setDraft] = useState("");
-  const [models, setModels] = useState<string[]>([]);
-  const [model, setModel] = useState("");
+  // The engine and model messages are sent with.
+  const [choice, setChoice] = useState<ModelChoice>({ engine: "", model: "" });
   // Settings new chats start with (stored in SQLite, so they survive a port change).
   const [defaults, setDefaults] = useState<ChatSettings | null>(null);
-  const [modelInfo, setModelInfo] = useState<{ model: string; info: ModelInfo } | null>(null);
+  const [modelInfo, setModelInfo] = useState<{ choice: ModelChoice; info: ModelInfo } | null>(null);
 
   const refreshChats = useCallback(async () => {
     try {
@@ -65,38 +75,36 @@ export function AppShell() {
       .catch(() => setDefaults({}));
   }, [refreshChats]);
 
-  const refreshModels = useCallback(async () => {
-    try {
-      const { models }: { models: string[] } = await (await fetch("/api/ollama/models", { cache: "no-store" })).json();
-      setModels(models);
-      setModel((current) => {
-        if (current && models.includes(current)) return current;
-        const saved = savedModel();
-        return saved && models.includes(saved) ? saved : (models[0] ?? "");
-      });
-    } catch {}
-  }, []);
-
-  // Load the installed models whenever Ollama comes up.
+  // Keep the choice valid as engines come and go: the current one while its engine offers it (or is just
+  // offline for now), else the one saved last time, else the first model of the first engine that has any.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- state is only set after the fetch resolves
-    if (running) void refreshModels();
-  }, [running, refreshModels]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- derived from what the engines report
+    setChoice((current) => {
+      if (current.model && (offers(engines, current) || engines.some((e) => e.id === current.engine && !e.online))) return current;
+      const saved = savedChoice();
+      if (saved && offers(engines, saved)) return saved;
+      const first = engines.find((e) => e.models.length > 0);
+      return first ? { engine: first.id, model: first.models[0] } : current;
+    });
+  }, [engines]);
+
+  const engine = engines.find((e) => e.id === choice.engine);
+  const online = engine?.online ?? false;
 
   // Context window and default temperature of the selected model, for the settings panel.
   useEffect(() => {
-    if (!running || !model) return;
+    if (!online || !choice.model) return;
     let cancelled = false;
-    fetch(`/api/ollama/show?model=${encodeURIComponent(model)}`)
+    fetch(`/api/engines/${encodeURIComponent(choice.engine)}/show?model=${encodeURIComponent(choice.model)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((info: ModelInfo | null) => {
-        if (!cancelled && info) setModelInfo({ model, info });
+        if (!cancelled && info) setModelInfo({ choice, info });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [running, model]);
+  }, [online, choice]);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -112,10 +120,11 @@ export function AppShell() {
     } catch {}
   };
 
-  const chooseModel = (name: string) => {
-    setModel(name);
+  const choose = (next: ModelChoice) => {
+    setChoice(next);
     try {
-      localStorage.setItem(MODEL_KEY, name);
+      localStorage.setItem(ENGINE_KEY, next.engine);
+      localStorage.setItem(MODEL_KEY, next.model);
     } catch {}
   };
 
@@ -134,9 +143,15 @@ export function AppShell() {
     }
   };
 
-  const installed = async (name: string) => {
-    await refreshModels();
-    chooseModel(name);
+  const installed = async (engineId: string, name: string) => {
+    await refreshEngines();
+    choose({ engine: engineId, model: name });
+  };
+
+  // Continue a saved chat with the engine and model it was using, if that model is still there.
+  const followChat = (id: number | null) => {
+    const chat = chats.find((c) => c.id === id);
+    if (chat && offers(engines, { engine: chat.engine, model: chat.model })) setChoice({ engine: chat.engine, model: chat.model });
   };
 
   const open = (id: number | null) => {
@@ -144,9 +159,7 @@ export function AppShell() {
     setScreen("chat");
     if (id !== null && id === view.id) return; // already open: don't interrupt a streaming reply
     setView((v) => ({ key: v.key + 1, id }));
-    // Continue a saved chat with the model it was using, if that model is still installed.
-    const chatModel = chats.find((c) => c.id === id)?.model;
-    if (chatModel && models.includes(chatModel)) setModel(chatModel);
+    followChat(id);
   };
 
   // Opens a search result: switch the chat to the branch that holds the message, then show it there.
@@ -161,8 +174,7 @@ export function AppShell() {
     setMobileOpen(false);
     setScreen("chat");
     setView((v) => ({ key: v.key + 1, id, focus: messageId }));
-    const chatModel = chats.find((c) => c.id === id)?.model;
-    if (chatModel && models.includes(chatModel)) setModel(chatModel);
+    followChat(id);
   };
 
   // A chat branched off the one on screen: open it right away, then refresh the list from the server.
@@ -195,10 +207,14 @@ export function AppShell() {
 
   const current = chats.find((c) => c.id === view.id);
   const branchOf = current?.branch_of != null ? chats.find((c) => c.id === current.branch_of) : undefined;
+  // The models panel manages the Ollama in use, or the built-in one when another kind of engine is selected.
+  const managed = engine?.kind === "ollama" ? engine : engines.find((e) => e.id === BUILTIN_OLLAMA_ID);
 
   const sidebar = (
     <Sidebar
       ollama={ollama}
+      engines={engines}
+      enginesLoaded={enginesLoaded}
       chats={chats}
       activeId={view.id}
       onNewChat={() => open(null)}
@@ -218,6 +234,10 @@ export function AppShell() {
         setMobileOpen(false);
         setModelsOpen(true);
       }}
+      onOpenEngines={() => {
+        setMobileOpen(false);
+        setEnginesOpen(true);
+      }}
     />
   );
 
@@ -235,20 +255,9 @@ export function AppShell() {
 
       <main className="flex min-w-0 flex-1">
         {screen === "dashboard" ? (
-          <DashboardView
-            models={models}
-            ollamaRunning={running}
-            onClose={() => setScreen("chat")}
-            onOpenSidebar={() => setMobileOpen(true)}
-          />
+          <DashboardView engines={engines} onClose={() => setScreen("chat")} onOpenSidebar={() => setMobileOpen(true)} />
         ) : screen === "compare" ? (
-          <CompareView
-            models={models}
-            defaultModel={model}
-            ollamaRunning={running}
-            onClose={() => setScreen("chat")}
-            onOpenSidebar={() => setMobileOpen(true)}
-          />
+          <CompareView engines={engines} defaultChoice={choice} onClose={() => setScreen("chat")} onOpenSidebar={() => setMobileOpen(true)} />
         ) : (
           defaults && (
             <Chat
@@ -256,7 +265,7 @@ export function AppShell() {
               chatId={view.id}
               focusMessageId={view.focus ?? null}
               initialSettings={defaults}
-              modelInfo={modelInfo?.model === model ? modelInfo.info : null}
+              modelInfo={modelInfo && modelInfo.choice.engine === choice.engine && modelInfo.choice.model === choice.model ? modelInfo.info : null}
               onSaveDefaults={saveDefaults}
               title={current?.title ?? "New chat"}
               branchOf={branchOf ? { id: branchOf.id, title: branchOf.title } : null}
@@ -264,10 +273,9 @@ export function AppShell() {
               onOpenChat={open}
               draft={draft}
               onDraftChange={setDraft}
-              ollamaRunning={running}
-              models={models}
-              model={model}
-              onModelChange={chooseModel}
+              engines={engines}
+              choice={choice}
+              onChoose={choose}
               onModelInstalled={installed}
               onChatCreated={(id) => setView((v) => ({ ...v, id }))}
               onChatsChanged={refreshChats}
@@ -279,9 +287,10 @@ export function AppShell() {
         )}
       </main>
 
-      {modelsOpen && (
-        <ModelsDialog ollamaRunning={running} onClose={() => setModelsOpen(false)} onModelsChanged={() => void refreshModels()} />
+      {modelsOpen && managed && (
+        <ModelsDialog engine={managed} onClose={() => setModelsOpen(false)} onModelsChanged={() => void refreshEngines()} />
       )}
+      {enginesOpen && <EnginesDialog engines={engines} onClose={() => setEnginesOpen(false)} onChanged={() => void refreshEngines()} />}
     </div>
   );
 }

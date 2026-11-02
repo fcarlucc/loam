@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatTokens } from "@/lib/format";
-import type { BenchmarkResult, Usage } from "@/lib/types";
+import type { BenchmarkResult, EngineModels, ModelChoice, Usage } from "@/lib/types";
 import { type Bar, BarChart } from "./BarChart";
 import { MenuIcon, XIcon } from "./icons";
 
@@ -25,23 +25,22 @@ function Tile({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Usage of the app (from the saved chats) and a repeatable speed benchmark of the installed models.
-export function DashboardView({
-  models,
-  ollamaRunning,
-  onClose,
-  onOpenSidebar,
-}: {
-  models: string[];
-  ollamaRunning: boolean;
-  onClose: () => void;
-  onOpenSidebar: () => void;
-}) {
+const keyOf = (c: ModelChoice) => `${c.engine}\n${c.model}`;
+
+// Usage of the app (from the saved chats) and a repeatable speed benchmark of the available models.
+export function DashboardView({ engines, onClose, onOpenSidebar }: { engines: EngineModels[]; onClose: () => void; onOpenSidebar: () => void }) {
+  // Every model of every engine that answers.
+  const options = engines.flatMap((e) => e.models.map((model) => ({ key: keyOf({ engine: e.id, model }), choice: { engine: e.id, model }, engineName: e.name })));
+  const anyOnline = engines.some((e) => e.online);
+  // A model's name with its engine, once replies or results come from more than one engine.
+  const engineName = (id: string) => engines.find((e) => e.id === id)?.name ?? id;
+  const labelOf = (engine: string, model: string, all: { engine: string }[]) =>
+    new Set(all.map((x) => x.engine)).size > 1 ? `${model} · ${engineName(engine)}` : model;
   const [usage, setUsage] = useState<Usage | null>(null);
   const [loadedAt, setLoadedAt] = useState(0); // "today" for the chart: when the data was loaded
   const [results, setResults] = useState<BenchmarkResult[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [selected, setSelected] = useState<string[]>(() => models.slice(0, 1));
+  const [selected, setSelected] = useState<string[]>(() => options.slice(0, 1).map((o) => o.key));
   const [cold, setCold] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,13 +68,15 @@ export function DashboardView({
     const controller = new AbortController();
     abortRef.current = controller;
     setError(null);
-    for (const [i, model] of selected.entries()) {
-      setProgress(`Running ${model} (${i + 1} of ${selected.length})… a cold start of a large model takes a while.`);
+    const chosen = selected.map((key) => options.find((o) => o.key === key)).filter((o) => o !== undefined);
+    for (const [i, o] of chosen.entries()) {
+      const { engine, model } = o.choice;
+      setProgress(`Running ${model} (${i + 1} of ${chosen.length})… a cold start of a large model takes a while.`);
       try {
         const res = await fetch("/api/benchmark", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model, cold }),
+          body: JSON.stringify({ engine, model, cold }),
           signal: controller.signal,
         });
         if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? "Benchmark failed");
@@ -109,7 +110,7 @@ export function DashboardView({
   });
 
   // Latest run of each model.
-  const latest = [...new Map([...results].reverse().map((r) => [r.model, r])).values()];
+  const latest = [...new Map([...results].reverse().map((r) => [keyOf(r), r])).values()];
   const fastest = Math.max(...latest.map((r) => r.tokensPerSecond), 0);
 
   return (
@@ -171,8 +172,8 @@ export function DashboardView({
                       </thead>
                       <tbody>
                         {usage.models.map((m) => (
-                          <tr key={m.model} className="border-b border-border last:border-0">
-                            <td className="px-3 py-2 font-mono text-[13px]">{m.model}</td>
+                          <tr key={keyOf(m)} className="border-b border-border last:border-0">
+                            <td className="px-3 py-2 font-mono text-[13px]">{labelOf(m.engine, m.model, usage.models)}</td>
                             <td className={tdClass}>{m.replies}</td>
                             <td className={tdClass}>{formatTokens(m.tokens)}</td>
                             <td className={tdClass}>{m.avgTokensPerSecond ? `${m.avgTokensPerSecond.toFixed(1)} tok/s` : "—"}</td>
@@ -202,15 +203,15 @@ export function DashboardView({
 
             <fieldset className="flex flex-wrap items-center gap-x-5 gap-y-2" disabled={progress !== null}>
               <legend className="sr-only">Models to benchmark</legend>
-              {models.map((m) => (
-                <label key={m} className="flex items-center gap-2 text-sm">
+              {options.map((o) => (
+                <label key={o.key} className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
-                    checked={selected.includes(m)}
-                    onChange={(e) => setSelected((s) => (e.target.checked ? [...s, m] : s.filter((x) => x !== m)))}
+                    checked={selected.includes(o.key)}
+                    onChange={(e) => setSelected((s) => (e.target.checked ? [...s, o.key] : s.filter((x) => x !== o.key)))}
                     className="accent-accent"
                   />
-                  <span className="font-mono text-[13px]">{m}</span>
+                  <span className="font-mono text-[13px]">{labelOf(o.choice.engine, o.choice.model, options.map((x) => x.choice))}</span>
                 </label>
               ))}
               <label className="flex items-center gap-2 text-sm text-muted">
@@ -227,14 +228,14 @@ export function DashboardView({
               ) : (
                 <button
                   onClick={() => void runBenchmark()}
-                  disabled={!ollamaRunning || selected.length === 0}
+                  disabled={!anyOnline || selected.length === 0}
                   className="rounded-lg bg-accent-grad px-3 py-1.5 text-sm font-medium text-accent-fg disabled:opacity-40"
                 >
                   Run benchmark
                 </button>
               )}
               <span aria-live="polite" className="text-sm text-muted">
-                {progress ?? (!ollamaRunning ? "Start Ollama to run a benchmark." : "")}
+                {progress ?? (!anyOnline ? "Start an engine to run a benchmark." : "")}
               </span>
             </div>
             {error && (
@@ -249,8 +250,8 @@ export function DashboardView({
                 <figcaption className="text-sm font-medium">Generation speed, latest run per model</figcaption>
                 <ul className="flex flex-col gap-2">
                   {latest.map((r) => (
-                    <li key={r.model} className="grid grid-cols-[minmax(0,10rem)_1fr_5.5rem] items-center gap-3 text-sm">
-                      <span className="truncate font-mono text-[13px]">{r.model}</span>
+                    <li key={keyOf(r)} className="grid grid-cols-[minmax(0,10rem)_1fr_5.5rem] items-center gap-3 text-sm">
+                      <span className="truncate font-mono text-[13px]">{labelOf(r.engine, r.model, latest)}</span>
                       <span className="h-3 overflow-hidden rounded-r-[4px] bg-surface-2" aria-hidden>
                         <span
                           className="block h-full rounded-r-[4px] bg-viz-1"
@@ -284,7 +285,7 @@ export function DashboardView({
                         <td className={`${tdClass} text-muted`}>
                           {new Date(r.createdAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}
                         </td>
-                        <td className="px-3 py-2 font-mono text-[13px]">{r.model}</td>
+                        <td className="px-3 py-2 font-mono text-[13px]">{labelOf(r.engine, r.model, results)}</td>
                         <td className={tdClass}>{r.tokensPerSecond} tok/s</td>
                         <td className={tdClass}>{r.promptPerSecond} tok/s</td>
                         <td className={tdClass}>
