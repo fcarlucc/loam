@@ -29,8 +29,9 @@ function savedChoice(): ModelChoice | null {
 const offers = (engines: EngineModels[], c: ModelChoice) => engines.some((e) => e.id === c.engine && e.models.includes(c.model));
 
 export function AppShell() {
-  const ollama = useOllamaStatus();
-  const { engines, refresh: refreshEngines } = useEngines();
+  const { engines, loaded: enginesLoaded, refresh: refreshEngines } = useEngines();
+  // After Ollama is started or stopped, the model picker and the engines card should follow at once.
+  const ollama = useOllamaStatus(refreshEngines);
 
   const [mobileOpen, setMobileOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
@@ -212,6 +213,8 @@ export function AppShell() {
   const sidebar = (
     <Sidebar
       ollama={ollama}
+      engines={engines}
+      enginesLoaded={enginesLoaded}
       chats={chats}
       activeId={view.id}
       onNewChat={() => open(null)}

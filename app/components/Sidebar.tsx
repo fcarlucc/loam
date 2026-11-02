@@ -1,9 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { ChatSummary } from "@/lib/types";
+import type { ChatSummary, EngineModels } from "@/lib/types";
 import { ChartIcon, ChatIcon, ColumnsIcon, CubeIcon, PencilIcon, PlugIcon, PlusIcon, TrashIcon } from "./icons";
-import { OllamaStatus, type useOllamaStatus } from "./OllamaStatus";
+import { EngineStatus } from "./EngineStatus";
+import type { useOllamaStatus } from "./OllamaStatus";
 import { NotifyToggle } from "./NotifyToggle";
 import { ThemeToggle } from "./ThemeToggle";
 import { SearchBox, SearchResults, useChatSearch } from "./ChatSearch";
@@ -139,6 +140,8 @@ function ChatItem({
 
 export function Sidebar({
   ollama,
+  engines,
+  enginesLoaded,
   chats,
   activeId,
   onNewChat,
@@ -152,6 +155,8 @@ export function Sidebar({
   onOpenDashboard,
 }: {
   ollama: ReturnType<typeof useOllamaStatus>;
+  engines: EngineModels[];
+  enginesLoaded: boolean;
   chats: ChatSummary[];
   activeId: number | null;
   onNewChat: () => void;
@@ -241,7 +246,7 @@ export function Sidebar({
         <PlugIcon width={16} height={16} />
         Engines
       </button>
-      <OllamaStatus state={ollama} />
+      <EngineStatus engines={engines} loaded={enginesLoaded} ollama={ollama} onOpenEngines={onOpenEngines} />
       <div className="flex items-stretch gap-2">
         <div className="flex min-w-0 flex-1 flex-col">
           <ThemeToggle />
