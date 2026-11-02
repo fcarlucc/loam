@@ -53,6 +53,8 @@ person, where privacy is a guarantee checked by tests, not a promise.
 **Models**
 - Every local engine in one place: Ollama, LM Studio, llama.cpp, MLX. The model picker groups models by engine and
   shows which engines are off; each chat remembers the engine and model it was using
+- The sidebar shows which engines are running ("3 of 4 engines running", one dot per engine) and opens the Engines
+  panel from there
 - One-click download of popular Ollama models, labelled by how well they fit your Mac's memory
 - Models & memory panel: what's loaded in RAM, free it, how long models stay loaded, model details, delete models
 - Start and stop Ollama from the sidebar

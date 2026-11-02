@@ -5,7 +5,8 @@ import { PowerIcon } from "./icons";
 
 type Status = { running: boolean; version?: string; host?: string };
 
-export function useOllamaStatus() {
+// `onPowered` runs once a start or stop has finished, whether or not it worked.
+export function useOllamaStatus(onPowered?: () => void) {
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState<"start" | "stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,14 +51,16 @@ export function useOllamaStatus() {
         void refresh();
       } finally {
         setBusy(null);
+        onPowered?.();
       }
     },
-    [refresh],
+    [refresh, onPowered],
   );
 
   return { status, busy, error, power };
 }
 
+// The card for an install with the built-in Ollama alone (see EngineStatus for several engines).
 export function OllamaStatus({ state }: { state: ReturnType<typeof useOllamaStatus> }) {
   const { status, busy, error, power } = state;
   const running = status?.running ?? false;
