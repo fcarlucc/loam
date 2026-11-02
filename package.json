@@ -13,7 +13,8 @@
     "lint": "eslint",
     "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\"",
     "typecheck": "next typegen && tsc --noEmit",
-    "test:api": "node --test --test-concurrency=1 tests/e2e/api.test.mjs"
+    "test:api": "node --test --test-concurrency=1 tests/e2e/api.test.mjs",
+    "test:ui": "playwright test"
   },
   "dependencies": {
     "next": "16.3.8",
@@ -24,6 +25,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.19.1",
     "@types/react": "^19",
