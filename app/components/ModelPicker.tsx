@@ -11,6 +11,10 @@ import { memoryGb, useSystemInfo } from "./useSystemInfo";
 
 type Installing = { engine: string; name?: string; sizeGb?: number };
 
+// The list sits LIST_GAP px above its trigger (mb-2) and keeps WINDOW_MARGIN px clear of the top of the window.
+const LIST_GAP = 8;
+const WINDOW_MARGIN = 12;
+
 // The model to chat with, grouped by engine. Engines that don't answer are listed too, so it is clear
 // where a model went. Downloads are offered under Ollama engines only: the others load models themselves.
 export function ModelPicker({
@@ -28,22 +32,42 @@ export function ModelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [installing, setInstalling] = useState<Installing | null>(null);
+  // How tall the list may be: the room between the top of the window and the trigger it opens above.
+  const [maxHeight, setMaxHeight] = useState<number | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
 
-  // On open, focus the current model (or the first entry) so the list works from the keyboard.
+  // The list opens above the composer and scrolls within the space left there, so with many engines the
+  // last groups (offline engines, downloads) stay reachable instead of running off the top of the window.
   useEffect(() => {
     if (!open) return;
+    const fit = () => {
+      const top = triggerRef.current?.getBoundingClientRect().top ?? 0;
+      setMaxHeight(Math.max(160, top - LIST_GAP - WINDOW_MARGIN));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [open]);
+
+  // On open, focus the current model (or the first entry) so the list works from the keyboard, and bring
+  // it into view: with several engines it may sit well down the list.
+  const sized = maxHeight !== null;
+  useEffect(() => {
+    if (!open || !sized) return;
     const list = listRef.current;
-    (list?.querySelector<HTMLElement>("[aria-pressed=true]") ?? list?.querySelector<HTMLElement>("button"))?.focus();
+    const selected = list?.querySelector<HTMLElement>("[aria-pressed=true]");
+    const target = selected ?? list?.querySelector<HTMLElement>("button");
+    target?.focus({ preventScroll: true });
+    selected?.scrollIntoView({ block: "center" });
     const onDown = (e: MouseEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  }, [open, sized]);
 
   function close() {
     setOpen(false);
@@ -109,12 +133,13 @@ export function ModelPicker({
         <ChevronUpIcon width={14} height={14} className={`shrink-0 transition-transform ${open ? "" : "rotate-180"}`} />
       </button>
 
-      {open && (
+      {open && sized && (
         <div
           ref={listRef}
           id={listId}
           onKeyDown={onListKeyDown}
-          className="absolute bottom-full left-0 z-30 mb-2 max-h-[min(24rem,60vh)] w-72 overflow-y-auto rounded-xl border border-border surface-glossy p-1.5"
+          style={{ maxHeight }}
+          className="absolute bottom-full left-0 z-30 mb-2 w-72 overflow-y-auto rounded-xl border border-border surface-glossy p-1.5"
         >
           {engines.length === 0 && <p className="px-2.5 py-2 text-sm text-muted">No engine is set up.</p>}
           {engines.map((engine, i) => {
