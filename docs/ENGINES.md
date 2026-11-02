@@ -1,7 +1,22 @@
 # Engines
 
-How the app talks to local AI servers, for contributors. The user-facing side (which engines are supported, how to
-add one) is in the README's [Engines](../README.md#engines) section.
+How the app talks to local AI servers. Which engines are supported and how to add one is in the README's
+[Engines](../README.md#engines) section.
+
+## What works where
+
+| | Ollama | LM Studio, llama.cpp, MLX |
+| --- | --- | --- |
+| Chat, streaming, stop, edit, regenerate, branch, search | ✓ | ✓ |
+| Text attachments | ✓ | ✓ |
+| Image attachments | models that can see | sent to the model, which may refuse them |
+| Reasoning shown apart from the reply | ✓ | ✓ when the server sends it (`reasoning_content`) |
+| Reasoning off / on / level per chat | ✓ | set it in the server |
+| System prompt, temperature | ✓ | ✓ |
+| Context length per chat | ✓ | set it in the server when loading the model |
+| Stats under a reply | tokens, speed, load time, context | tokens; speed as measured here (llama.cpp reports its own) |
+| Download, delete, memory, keep-alive, start and stop | ✓ | the server manages its models |
+| Side-by-side answers, speed test, usage | ✓ | ✓ |
 
 ## The idea
 
@@ -25,7 +40,7 @@ interface Engine {
   capabilities(model): Promise<ModelCapabilities | undefined>;         // { vision, tools, thinking }, undefined = unknown
   modelInfo(model): Promise<ModelInfo>;                                // for the settings and models panels
   chat(request): Promise<AsyncIterable<StreamEvent>>;                  // see below
-  complete(request): Promise<Completion>;                              // a whole reply: titles, benchmarks
+  complete(request): Promise<Completion>;                              // a whole reply: titles, speed tests
   pull?, deleteModel?, loadedModels?, unload?                          // only where `supports` says so
 }
 ```
@@ -72,7 +87,7 @@ row with the same id, which then wins. The built-in engine can't be removed.
 the UI. A stored remote engine is refused again when the variable is unset.
 
 Chats remember the engine they were last continued with (`chats.engine`), replies the engine that wrote them
-(`messages.engine`), and so do benchmarks. Rows from before engines existed were Ollama's: the migration sets them so.
+(`messages.engine`), and so do speed test results. Rows from before engines existed were Ollama's: the migration sets them so.
 Engines are referenced by id, not by a foreign key: removing an engine leaves its chats, which can go on with another.
 
 ## Routes

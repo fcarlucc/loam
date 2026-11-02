@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Loam",
-  description: "Every local model, one private app",
+  description: "Chat client for Local Offline AI Models",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
