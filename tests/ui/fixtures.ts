@@ -35,10 +35,14 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // Should the runner die before the teardown, the app must not outlive it.
       const stop = () => app.child.kill("SIGINT");
       process.once("exit", stop);
-      await app.ready(120_000);
-      await provide(app);
-      await app.stop();
-      process.off("exit", stop);
+      try {
+        await app.ready(120_000);
+        await provide(app);
+      } finally {
+        // Also when the app never got ready: stop it and remove its throwaway database.
+        await app.stop();
+        process.off("exit", stop);
+      }
     },
     { scope: "worker", timeout: 180_000 },
   ],

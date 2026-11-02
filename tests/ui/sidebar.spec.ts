@@ -48,17 +48,21 @@ test("deleting a chat asks first, then removes it for good", async ({ page }) =>
 });
 
 test("full-text search opens the right chat at the right message", async ({ page, api }) => {
-  // A long chat, so the message searched for is out of view once the chat opens at its end.
+  // A long chat with the word in a message in the middle: opening the chat at its top or at its end would both
+  // leave that message out of view.
   const needle = unique("needle").replace(/\s/g, "");
-  const filler = (n: number) => Array.from({ length: 90 }, (_, i) => `w${n}x${i}`).join(" ");
-  const { id, messages } = await seedChat(api, [`${needle} ${filler(0)}`, ...Array.from({ length: 7 }, (_, i) => filler(i + 1))]);
+  const filler = (n: number) => Array.from({ length: 150 }, (_, i) => `w${n}x${i}`).join(" ");
+  const exchanges = Array.from({ length: 9 }, (_, i) => filler(i));
+  exchanges[4] = `${needle} ${filler(4)}`;
+  const { id, messages } = await seedChat(api, exchanges);
+  const target = messages.find((m) => m.role === "user" && m.content.includes(needle))!;
   const { chats } = (await (await api.get("/api/chats")).json()) as { chats: { id: number; title: string }[] };
   const title = chats.find((c) => c.id === id)!.title;
 
   await openApp(page);
   await page.getByRole("searchbox", { name: "Search chats" }).fill(needle);
   const results = page.getByRole("list", { name: "Search results" });
-  // The word is in the first message and in its reply: two hits, each quoting it.
+  // The word is in one message and in its reply: two hits, each quoting it.
   await expect(results.getByRole("listitem")).toHaveCount(2);
   const hit = results.getByRole("button").filter({ hasText: "· you" });
   await expect(hit).toContainText(title);
@@ -66,7 +70,8 @@ test("full-text search opens the right chat at the right message", async ({ page
 
   await hit.click();
   await expect(chatTitle(page)).toHaveText(title);
-  await expect(page.locator(`[data-message-id="${messages[0].id}"]`)).toBeInViewport();
+  await expect(page.locator(`[data-message-id="${target.id}"]`)).toBeInViewport();
+  await expect(page.locator(`[data-message-id="${messages[0].id}"]`)).not.toBeInViewport();
   await expect(page.locator(`[data-message-id="${messages.at(-1)!.id}"]`)).not.toBeInViewport();
 
   // Back to the list.
