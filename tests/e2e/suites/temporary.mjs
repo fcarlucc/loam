@@ -31,8 +31,8 @@ export function temporarySuite(env) {
       const token = `ephemeral${Date.now().toString(36)}`;
       const messages = [
         { role: "user", content: `First ${token}` },
-        { role: "assistant", content: "First answer" },
-        { role: "user", content: "Second", attachments: [notes] },
+        { role: "assistant", content: "First answer\n" },
+        { role: "user", content: "Second  ", attachments: [notes] },
       ];
       const r = await temporary({ messages, settings: { system: "Be brief", temperature: 0.3 } });
       assert.equal(r.status, 200);
@@ -43,9 +43,10 @@ export function temporarySuite(env) {
       assert.deepEqual(sent.messages, [
         { role: "system", content: "Be brief" },
         { role: "user", content: `First ${token}` },
-        { role: "assistant", content: "First answer" },
+        { role: "assistant", content: "First answer\n" },
         { role: "user", content: "Second\n\n--- Attached file: notes.txt ---\nMilk\nEggs\n--- End of notes.txt ---" },
       ]);
+      // Messages reach the model as the page shows them; only the one to answer is trimmed.
       assert.equal(sent.options.temperature, 0.3);
       assert.equal(r.text, echo(sent.messages));
 
@@ -112,7 +113,11 @@ export function temporarySuite(env) {
         [{ messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }] }, "Nothing to reply to"],
         [{ messages: [{ role: "user", content: "  " }] }, "Nothing to reply to"],
         [{ messages: [{ role: "assistant", content: "x", attachments: [notes] }, { role: "user", content: "y" }] }, "Invalid request"],
-        [{ messages: Array.from({ length: 401 }, () => ({ role: "user", content: "x" })) }, "Invalid request"],
+        [{ messages: Array.from({ length: 401 }, () => ({ role: "user", content: "x" })) }, "This temporary chat is too long: start a new one to go on."],
+        [
+          { messages: Array.from({ length: 4 }, () => ({ role: "user", content: "x", attachments: [{ ...notes, data: "a".repeat(199_000) }].concat(Array(7).fill({ ...notes, data: "b".repeat(199_000) })) })) },
+          "This temporary chat's files take more than 6 MB together: start a new one to send more.",
+        ],
         [{ messages: [{ role: "user", content: "hi" }], model: "" }, "Invalid request"],
         [{ messages: [{ role: "user", content: "hi" }], settings: { temperature: 9 } }, "Invalid settings"],
         [{ messages: [{ role: "user", content: "hi" }], engine: "nope" }, "Engine not found"],

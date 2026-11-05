@@ -265,7 +265,8 @@ export function AppShell() {
               key={view.key}
               chatId={view.id}
               temporary={!!view.temporary}
-              onTemporaryChange={(temporary) => setView((v) => ({ key: v.key + 1, id: null, temporary }))}
+              // Only an empty new chat can switch, so it stays mounted: files and settings already set are kept.
+              onTemporaryChange={(temporary) => setView((v) => ({ ...v, temporary }))}
               focusMessageId={view.focus ?? null}
               initialSettings={defaults}
               modelInfo={modelInfo && modelInfo.choice.engine === choice.engine && modelInfo.choice.model === choice.model ? modelInfo.info : null}

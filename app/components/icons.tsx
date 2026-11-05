@@ -34,13 +34,11 @@ export const SendIcon = (p: SVGProps<SVGSVGElement>) => (
 export const MenuIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M4 6h16M4 12h16M4 18h16" /></svg>
 );
-// A chat bubble drawn dashed: a chat that isn't kept.
-export const TemporaryIcon = (p: SVGProps<SVGSVGElement>) => (
-  <svg {...base(p)}><path strokeDasharray="3 3" d="M21 12a8 8 0 0 1-11.6 7.1L3 20l1-4.6A8 8 0 1 1 21 12z" /></svg>
-);
 export const ChatIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M21 12a8 8 0 0 1-11.6 7.1L3 20l1-4.6A8 8 0 1 1 21 12z" /></svg>
 );
+// The chat bubble drawn dashed: a chat that isn't kept.
+export const TemporaryIcon = (p: SVGProps<SVGSVGElement>) => <ChatIcon strokeDasharray="3 3" {...p} />;
 export const TrashIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></svg>
 );

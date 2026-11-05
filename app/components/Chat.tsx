@@ -1,13 +1,14 @@
 "use client";
 
 import { type Dispatch, Fragment, type SetStateAction, useEffect, useRef, useState } from "react";
-import { MAX_ATTACHMENTS } from "@/lib/attachments";
+import { MAX_ATTACHMENTS, MAX_TOTAL_BYTES } from "@/lib/attachments";
 import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
 import { hasCustomSettings } from "@/lib/settings";
+import { MAX_TEMPORARY_MESSAGES, TEMPORARY_FILES_TOO_BIG, TEMPORARY_TOO_LONG } from "@/lib/temporary";
 import type { ChatEvent, ChatMessage, ChatSettings as Settings, ChatSummary, EngineModels, ModelChoice, ModelInfo, NewAttachment, Versions } from "@/lib/types";
-import { acceptFor, AttachmentChips, metaOf, readFiles, textTokens } from "./Attachments";
+import { acceptFor, AttachmentChips, blobOf, metaOf, readFiles, sizeOf, textTokens } from "./Attachments";
 import { CopyButton } from "./CopyButton";
 import {
   BranchIcon,
@@ -129,6 +130,9 @@ export function Chat({
   // Ids for the messages of a temporary chat, which the server never numbers: negative, so they can't clash.
   const lastLocalId = useRef(0);
   const localId = () => --lastLocalId.current;
+  // Links to a temporary chat's files (blob: URLs), released when the chat goes.
+  const fileUrls = useRef<string[]>([]);
+  useEffect(() => () => fileUrls.current.forEach((url) => URL.revokeObjectURL(url)), []);
 
   // The reply being streamed: its request, and the chat id once the server has accepted it.
   const activeRef = useRef<{ controller: AbortController; chatId: number | null } | null>(null);
@@ -250,7 +254,7 @@ export function Chat({
 
   function sendDraft() {
     const content = draft.trim();
-    if (!ready || (!content && !pending.length)) return; // a draft that can't be sent yet stays in the box
+    if (!ready || temporaryFull || (!content && !pending.length)) return; // a draft that can't be sent yet stays in the box
     const attachments = pending;
     onDraftChange("");
     setPending([]);
@@ -269,6 +273,16 @@ export function Chat({
     setPending((p) => [...p, ...accepted].slice(0, MAX_ATTACHMENTS));
     setFileError(refused.length ? refused.join(" · ") : null);
   }
+
+  // A temporary chat goes whole with every message: past its limits, the server would refuse the next one.
+  const temporaryBytes = [...messages.flatMap((m) => m.files ?? []), ...pending].reduce((n, a) => n + sizeOf(a), 0);
+  const temporaryFull = !temporary
+    ? null
+    : messages.length + 1 > MAX_TEMPORARY_MESSAGES
+      ? TEMPORARY_TOO_LONG
+      : temporaryBytes > MAX_TOTAL_BYTES
+        ? TEMPORARY_FILES_TOO_BIG
+        : null;
 
   // What the attached text would take from the context the next reply has.
   const fileTokens = textTokens(pending);
@@ -353,7 +367,14 @@ export function Chat({
     setStreaming(true);
     followRef.current.force = true;
     // The files shown with the message while it is sent: the new ones, or those of the message being edited.
-    const files = action.kind === "send" ? action.attachments?.map(metaOf) : action.kind === "edit" ? before[cut].attachments : undefined;
+    // In a temporary chat each file gets a link of its own, since the server never keeps it.
+    const shown = (a: NewAttachment) => {
+      if (!temporary) return metaOf(a);
+      const url = URL.createObjectURL(blobOf(a));
+      fileUrls.current.push(url);
+      return { ...metaOf(a), preview: url };
+    };
+    const files = action.kind === "send" ? action.attachments?.map(shown) : action.kind === "edit" ? before[cut].attachments : undefined;
     // A temporary chat numbers its own messages and keeps their files, to send them again with the next ones.
     const sent: Message | null =
       content === null
@@ -513,26 +534,27 @@ export function Chat({
           <p data-testid="chat-title" className="min-w-0 flex-1 truncate text-sm font-medium text-muted">
             {title}
           </p>
-          {/* Only a new chat can be made temporary, and a temporary one stays so once it has messages. */}
-          {chatId === null && (
-            <button
-              onClick={() => onTemporaryChange(!temporary)}
-              disabled={messages.length > 0}
-              aria-pressed={temporary}
-              title={
-                temporary
-                  ? messages.length > 0
-                    ? "Temporary chat: not saved, gone once you leave it"
-                    : "Save this chat as usual"
-                  : "Temporary chat: not saved, not searchable, gone once you leave it"
-              }
-              className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs transition-colors hover:bg-surface-2 hover:text-fg disabled:hover:bg-transparent ${
-                temporary ? "text-accent disabled:hover:text-accent" : "text-muted"
-              }`}
-            >
+          {/* Only an empty new chat can be made temporary; once it has messages it says so, and stays so. */}
+          {temporary && messages.length > 0 ? (
+            <span data-testid="temporary-badge" className="flex h-8 items-center gap-1.5 px-2 text-xs text-accent">
               <TemporaryIcon width={17} height={17} />
-              <span className={temporary ? "" : "sr-only"}>Temporary chat</span>
-            </button>
+              Temporary chat
+            </span>
+          ) : (
+            chatId === null &&
+            messages.length === 0 && (
+              <button
+                onClick={() => onTemporaryChange(!temporary)}
+                aria-pressed={temporary}
+                title={temporary ? "Save this chat as usual" : "Temporary chat: not saved, not searchable, gone once you leave it"}
+                className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs transition-colors hover:bg-surface-2 hover:text-fg ${
+                  temporary ? "text-accent" : "text-muted"
+                }`}
+              >
+                <TemporaryIcon width={17} height={17} />
+                <span className={temporary ? "" : "sr-only"}>Temporary chat</span>
+              </button>
+            )
           )}
           <button
             ref={settingsToggleRef}
@@ -747,6 +769,7 @@ export function Chat({
                 </button>
               </p>
             )}
+            {temporaryFull && <p className="px-2 pb-1 text-xs text-danger">{temporaryFull}</p>}
             {filesTooBig && (
               <p className="px-2 pb-1 text-xs text-danger">
                 The attached text is about {formatTokens(fileTokens)} tokens, more than half of the {formatTokens(contextSize)} context:
@@ -792,7 +815,7 @@ export function Chat({
               ) : (
                 <button
                   onClick={sendDraft}
-                  disabled={!ready || (!draft.trim() && !pending.length)}
+                  disabled={!ready || !!temporaryFull || (!draft.trim() && !pending.length)}
                   aria-label="Send"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-grad text-accent-fg transition-opacity disabled:opacity-30"
                 >
