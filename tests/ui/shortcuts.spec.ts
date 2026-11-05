@@ -2,12 +2,14 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import {
+  ask,
   chatTitle,
   chooseModel,
   composer,
   lastReply,
   modelPicker,
   openApp,
+  replies,
   send,
   sendButton,
   startChat,
@@ -218,4 +220,48 @@ test("the palette opens the chat settings and the other screens and dialogs", as
   await expect(page.getByRole("heading", { name: "Compare models" })).toBeVisible();
   await run("engines");
   await expect(page.getByRole("dialog", { name: /Engines/ })).toBeVisible();
+});
+
+test("the palette starts a temporary chat, from a chat or from another screen", async ({ page, api }) => {
+  await as(page, "mac");
+  await openApp(page);
+  const chatsBefore = (await (await api.get("/api/chats")).json()).chats.length;
+  const run = async (query: string) => {
+    await page.keyboard.press("Meta+k");
+    await paletteInput(page).fill(query);
+    await page.keyboard.press("Enter");
+    await expect(palette(page)).toHaveCount(0);
+  };
+
+  await startChat(page, unique("saved"));
+  await run("new temporary");
+  await expect(page.getByRole("heading", { name: "Temporary chat" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Temporary chat" })).toHaveAttribute("aria-pressed", "true");
+  await expect(userMessages(page)).toHaveCount(0);
+
+  // From another screen it opens the chat first; and the conversation stays unsaved.
+  await run("compare");
+  await run("new temporary");
+  await expect(page.getByRole("heading", { name: "Temporary chat" })).toBeVisible();
+  await page.keyboard.press("Shift+Escape");
+  await ask(page, unique("unsaved"));
+  await expect(page.getByTestId("temporary-badge")).toBeVisible();
+  expect((await (await api.get("/api/chats")).json()).chats.length).toBe(chatsBefore + 1);
+});
+
+test("in a temporary chat, Escape stops the reply and the shortcuts reach the chat", async ({ page }) => {
+  await as(page, "mac");
+  await openApp(page);
+  await page.getByRole("button", { name: "Temporary chat" }).click();
+  await ask(page, unique("first"));
+  await page.keyboard.press("Meta+Alt+KeyR");
+  await expect(sendButton(page)).toBeVisible();
+  await expect(replies(page)).toHaveCount(1);
+
+  await chooseModel(page, "slow:latest");
+  await send(page, unique("long"));
+  await expect(lastReply(page)).toContainText("tick 2");
+  await composer(page).press("Escape");
+  await expect(sendButton(page)).toBeVisible();
+  await expect(lastReply(page)).not.toContainText("tick 80");
 });

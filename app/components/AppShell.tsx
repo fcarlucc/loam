@@ -51,6 +51,7 @@ function paletteItems({
   const theme = getPref();
   const commands: Command[] = [
     { id: "new-chat", group: "Actions", label: "New chat", keys: keysOf("newChat") },
+    { id: "new-temporary-chat", group: "Actions", label: "New temporary chat", keywords: "private incognito not saved" },
     { id: "search", group: "Actions", label: "Search chats", keys: keysOf("search"), keywords: "find messages" },
     ...(chat?.streaming ? [] : [{ id: "model", group: "Actions", label: "Change model…", keys: keysOf("model"), keywords: "switch engine", opens: "models" as const }]),
     ...(chat?.canRegenerate
@@ -334,6 +335,12 @@ export function AppShell() {
     if (id.startsWith("theme:")) return setPref(id.slice(6) as ThemePref);
     const actions: Record<string, () => void> = {
       "new-chat": () => open(null),
+      // An empty new chat, switched to temporary like the header's toggle does, from whatever was on screen.
+      "new-temporary-chat": () => {
+        setMobileOpen(false);
+        setScreen("chat");
+        setView((v) => ({ key: v.key + 1, id: null, temporary: true }));
+      },
       search: focusSearch,
       regenerate: () => chatRef.current?.regenerate(),
       stop: () => chatRef.current?.stop(),
