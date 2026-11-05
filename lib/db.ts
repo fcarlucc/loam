@@ -191,6 +191,10 @@ function migrate(conn: DatabaseSync) {
     }
   }
   addColumn(conn, "benchmarks", "engine", "TEXT NOT NULL DEFAULT 'ollama'");
+
+  // A compacted chat (see lib/compact.ts): the summary of its branch up to and including this message,
+  // which the model reads instead of those messages. Not part of the search index.
+  addColumn(conn, "messages", "summary", "TEXT");
 }
 
 function hasColumn(conn: DatabaseSync, table: string, column: string) {
@@ -222,6 +226,7 @@ type MessageRow = {
   copied: number;
   engine: string | null;
   model: string | null;
+  summary: string | null;
 };
 
 const CHAT_COLUMNS = "id, title, engine, model, settings, branch_of, created_at, updated_at";
@@ -276,7 +281,7 @@ export function deleteChat(id: number) {
 
 function messageRows(chatId: number) {
   return db()
-    .prepare("SELECT id, parent_id, role, content, stats, thinking, copied, engine, model FROM messages WHERE chat_id = ? ORDER BY id")
+    .prepare("SELECT id, parent_id, role, content, stats, thinking, copied, engine, model, summary FROM messages WHERE chat_id = ? ORDER BY id")
     .all(chatId) as MessageRow[];
 }
 
@@ -318,6 +323,7 @@ export function getPath(chatId: number, leafId: number | null = getLeafId(chatId
       ...(stats ? { stats } : {}),
       ...(ids.length > 1 ? { versions: { ids, index: ids.indexOf(row.id) } } : {}),
       ...(row.copied ? { copied: true } : {}),
+      ...(row.summary ? { summary: row.summary } : {}),
     });
   }
   return path;
@@ -409,9 +415,14 @@ export function getAttachment(id: number) {
     | undefined;
 }
 
+// Keeps a compaction's summary on the last message it covers, or removes it (null). Not counted as activity.
+export function setSummary(chatId: number, messageId: number, summary: string | null) {
+  db().prepare("UPDATE messages SET summary = ? WHERE id = ? AND chat_id = ?").run(summary, messageId, chatId);
+}
+
 // Starts a new chat from the branch ending at `messageId`, so the conversation can go on there in another
 // direction while this chat stays as it is. Only that branch is copied, without the other versions of its
-// messages. Messages, files, reasoning and stats are copies, not shared rows, so deleting either chat leaves
+// messages. Messages, files, reasoning, stats and summaries are copies, not shared rows, so deleting either chat leaves
 // the other whole. Returns the new chat's id.
 export function branchChat(chatId: number, messageId: number, title: string, settings: ChatSettings) {
   return transaction(() => {
@@ -423,10 +434,10 @@ export function branchChat(chatId: number, messageId: number, title: string, set
            UNION ALL
            SELECT m.parent_id FROM messages m JOIN branch b ON m.id = b.id WHERE m.parent_id IS NOT NULL
          )
-         SELECT m.id, m.role, m.content, m.engine, m.model, m.stats, m.thinking, m.created_at
+         SELECT m.id, m.role, m.content, m.engine, m.model, m.stats, m.thinking, m.summary, m.created_at
            FROM messages m JOIN branch USING (id) ORDER BY m.id`,
       )
-      .all(messageId, chatId) as (Pick<MessageRow, "id" | "role" | "content" | "stats" | "thinking"> & {
+      .all(messageId, chatId) as (Pick<MessageRow, "id" | "role" | "content" | "stats" | "thinking" | "summary"> & {
       engine: string | null;
       model: string | null;
       created_at: number;
@@ -442,13 +453,13 @@ export function branchChat(chatId: number, messageId: number, title: string, set
       .run(title, JSON.stringify(settings), now, now, chatId);
     const branchId = Number(lastInsertRowid);
     const insert = db().prepare(
-      `INSERT INTO messages (chat_id, parent_id, role, content, engine, model, stats, thinking, created_at, copied)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      `INSERT INTO messages (chat_id, parent_id, role, content, engine, model, stats, thinking, summary, created_at, copied)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     );
     let parent: number | null = null;
     for (const m of rows) {
       const copy: number = Number(
-        insert.run(branchId, parent, m.role, m.content, m.engine, m.model, m.stats, m.thinking, m.created_at).lastInsertRowid,
+        insert.run(branchId, parent, m.role, m.content, m.engine, m.model, m.stats, m.thinking, m.summary, m.created_at).lastInsertRowid,
       );
       copyAttachments(m.id, copy);
       parent = copy;

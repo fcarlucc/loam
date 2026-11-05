@@ -154,6 +154,22 @@ export function SettingsSidebar({
                 </span>
               </label>
             )}
+
+            <label className="flex items-start gap-2.5">
+              <input
+                type="checkbox"
+                checked={settings.autoCompact ?? false}
+                onChange={(e) => (e.target.checked ? update({ autoCompact: true }) : update({}, "autoCompact"))}
+                className="mt-0.5 accent-accent"
+              />
+              <span className="flex flex-col gap-1">
+                <span className="text-xs font-medium">Compact automatically</span>
+                <span className="text-xs text-muted">
+                  When the conversation nearly fills the context, the model summarizes the older messages before your next one is
+                  sent, instead of losing them.
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border p-4">
