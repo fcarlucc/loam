@@ -44,6 +44,7 @@ Loam is the one in between: a fast, polished app for one person, the way I like 
 - Text, code and image attachments, kept with the chat and deleted with it
 - Per-chat system prompt, temperature and context length
 - Speed, tokens and context use under every reply
+- Keyboard first: ⌘K opens a command palette for every action, chat and model; ⌘/ lists the shortcuts
 
 **History**
 - Chat list grouped by date, with full-text search across every message
