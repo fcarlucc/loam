@@ -15,7 +15,11 @@ export const MODELS = {
   "thinker:latest": { size: 4_000_000_000, thinks: true }, // reasons out loud before replying, unless told not to (think: false)
   "seer:latest": { size: 5_000_000_000, sees: true }, // accepts images; the others refuse them like Ollama does
   "garbled:latest": { size: 600_000_000, garbles: true }, // streams a few words, then a line that isn't JSON
+  "mute:latest": { size: 700_000_000, mute: true }, // answers a whole-reply request (title, summary) with nothing
+  // Reasons at a level only, like gpt-oss: refuses think: false.
+  "leveled:latest": { size: 800_000_000, thinks: true, levels: ["low", "medium", "high"] },
 };
+export const THINK_LEVEL_ERROR = "think value \"false\" is not supported for this model";
 export const NO_VISION_ERROR = "Multimodal data provided, but model does not support multimodal requests.";
 export const FLAKY_ERROR = "the fake model fell over";
 export const THINKING_PREFIX = "Thinking about: ";
@@ -88,7 +92,7 @@ export async function startFakeOllama() {
           model_info: { "general.architecture": "fake", "fake.context_length": 8192 },
           parameters: 'temperature 0.7\nstop "<end>"',
           capabilities: ["completion", ...(spec.thinks ? ["thinking"] : []), ...(spec.sees ? ["vision"] : [])],
-          ...(spec.thinks ? { thinking: { values: [false, "low", "medium"], default: "medium" } } : {}),
+          ...(spec.thinks ? { thinking: { values: spec.levels ?? [false, "low", "medium"], default: "medium" } } : {}),
           license: "FAKE LICENSE\nline 2\nline 3\nline 4 never shown",
           details: DETAILS,
         });
@@ -131,6 +135,7 @@ export async function startFakeOllama() {
       case "POST /api/chat": {
         if (!spec) return notFound(body.model);
         if (!spec.sees && (body.messages ?? []).some((m) => m.images?.length)) return json(400, { error: NO_VISION_ERROR });
+        if (spec.levels && body.think === false) return json(400, { error: THINK_LEVEL_ERROR });
         if (spec.loadMs) await sleep(spec.loadMs);
         if (res.destroyed) return; // the app gave up while the model was "loading"
 
@@ -156,7 +161,7 @@ export async function startFakeOllama() {
           return json(200, {
             model,
             created_at: now(),
-            message: { role: "assistant", content: text, ...(thought ? { thinking: thought } : {}) },
+            message: { role: "assistant", content: spec.mute ? "" : text, ...(thought ? { thinking: thought } : {}) },
             done: true,
             done_reason: "stop",
             ...timings,

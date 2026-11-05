@@ -5,6 +5,10 @@ import type { ChatMessage } from "./types";
 // instead of those messages. The summary is kept on the last message it covers (messages.summary), so it
 // belongs to the branches that go through that message and to no other.
 
+// The context assumed when nothing tells it: the page doesn't know what the engine loaded (OpenAI-compatible
+// servers don't say) and the chat sets none.
+export const DEFAULT_CONTEXT = 4096;
+
 const SUMMARY_HEADING =
   "Summary of the earlier part of this conversation. The messages it covers were replaced by it to save room; go on from it as if you had read them:";
 
@@ -32,7 +36,9 @@ export function compactionRange(path: Pick<ChatMessage, "role" | "summary">[]) {
 }
 
 // Characters of conversation per summarizing request, for a model reading `contextTokens` at most: room is
-// kept for the instructions, the summary so far and the new summary. Three characters per token, to be safe.
+// kept for the instructions, the summary so far and the new summary. Three characters per token, to be safe
+// for English, Italian and code; Chinese, Japanese or Korean text runs closer to one, so a piece of it can be
+// up to three times too long for the context and the engine cuts it.
 export function chunkBudget(contextTokens: number, summaryTokens: number) {
   return Math.max(2000, (contextTokens - 2 * summaryTokens - 400) * 3);
 }

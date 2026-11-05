@@ -95,6 +95,7 @@ describe("a database from before engines", () => {
       "replies came from Ollama, user messages have no engine",
     );
     assert.deepEqual(env.db.prepare("SELECT engine FROM benchmarks").all().map(plain), [{ engine: "ollama" }]);
+    assert.equal(env.db.prepare("SELECT count(*) AS n FROM messages WHERE summary IS NOT NULL").get().n, 0, "no chat was compacted");
     assert.deepEqual(env.db.prepare("SELECT count(*) AS n FROM engines").get().n, 0, "the built-in Ollama needs no row");
   });
 

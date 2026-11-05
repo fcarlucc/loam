@@ -43,7 +43,8 @@ Loam is the one in between: a fast, polished app for one person, the way I like 
 - Text, code and image attachments, kept with the chat and deleted with it
 - Per-chat system prompt, temperature and context length
 - Compact a long chat: the model summarizes the older messages to free its context, by hand or automatically when
-  the context is nearly full; the summary can be read and undone
+  the context is nearly full; the summary can be read and undone. A message too long for one summarizing request
+  (a big attached file, say) is summarized from its beginning and its end
 - Speed, tokens and context use under every reply
 
 **History**

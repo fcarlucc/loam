@@ -9,6 +9,12 @@ export const isThinkValue = (v: unknown): v is ThinkValue =>
   typeof v === "boolean" || (typeof v === "string" && (THINK_LEVELS as readonly string[]).includes(v));
 // For "Reasoning off", "Reasoning medium", ...
 export const thinkLabel = (v: ThinkValue) => (v === false ? "off" : v === true ? "on" : v === "xhigh" ? "extra high" : v);
+// The least reasoning a model offers, for requests that need none (summaries): off where it can be turned off,
+// else its lowest level (gpt-oss only takes low/medium/high). Undefined leaves the model's own default.
+export function leastThinking(values: ThinkValue[] | undefined): ThinkValue | undefined {
+  if (!values?.length || values.includes(false)) return false;
+  return THINK_LEVELS.find((level) => values.includes(level));
+}
 
 // Clean settings, or null when a field has the wrong type or is out of range.
 export function parseSettings(input: unknown): ChatSettings | null {
