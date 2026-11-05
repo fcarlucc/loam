@@ -28,6 +28,7 @@ import { Markdown } from "./Markdown";
 import { ModelPicker } from "./ModelPicker";
 import { Reasoning } from "./Reasoning";
 import { ReasoningPicker } from "./ReasoningPicker";
+import { RegenerateMenu } from "./RegenerateMenu";
 import { nearlyFull, StatsLine } from "./StatsLine";
 import { SETTINGS_SIDEBAR_ID, SettingsSidebar } from "./SettingsSidebar";
 import { offlineLabel } from "./useEngines";
@@ -51,12 +52,23 @@ function describeError(e: unknown, accepted: boolean) {
   return e instanceof Error ? e.message : "Something went wrong";
 }
 
-// What a run asks for: a new message, a new version of a sent message, a new version of a reply,
-// or a reply to a message that has none.
+// The settings as another model takes them, for a reply it writes once: the context length capped to its
+// window, and a reasoning setting it doesn't offer left out (it then reasons as it does by default). Unknown
+// details (an engine that can't tell) change nothing.
+function fitSettings(settings: Settings, info: ModelInfo | null): Settings {
+  const out = { ...settings };
+  const max = info?.contextMax;
+  if (out.contextLength !== undefined && max && out.contextLength > max) out.contextLength = max;
+  if (out.think !== undefined && info && !info.thinking?.values.includes(out.think)) delete out.think;
+  return out;
+}
+
+// What a run asks for: a new message, a new version of a sent message, a new version of a reply (by
+// another model once, with `with`), or a reply to a message that has none.
 type Action =
   | { kind: "send"; content: string; attachments?: NewAttachment[] }
   | { kind: "edit"; id: number; content: string }
-  | { kind: "regenerate"; id: number }
+  | { kind: "regenerate"; id: number; with?: ModelChoice }
   | { kind: "retry" };
 
 // A message as the page holds it. In a temporary chat `files` keeps the attached files themselves, since the
@@ -251,6 +263,8 @@ export function Chat({
   const canRetry = !streaming && (chatId !== null || temporary) && last?.role === "user";
   // In a branched chat, the last message copied from the chat it came from (-1 elsewhere).
   const branchPoint = messages.findLastIndex((m) => m.copied);
+  // Replies name their model where it tells them apart: in a chat written by several, and between versions.
+  const severalModels = new Set(messages.flatMap((m) => (m.role === "assistant" && m.model ? [`${m.engine}/${m.model}`] : []))).size > 1;
 
   function sendDraft() {
     const content = draft.trim();
@@ -351,7 +365,11 @@ export function Chat({
   }
 
   async function run(action: Action) {
-    if (!ready || (action.kind !== "send" && chatId === null && !temporary)) return;
+    // "Regenerate with" another model writes this one reply with it; the chat keeps its model.
+    const target = action.kind === "regenerate" && action.with ? action.with : choice;
+    const oneOff = target.engine !== choice.engine || target.model !== choice.model;
+    const targetOnline = engines.find((e) => e.id === target.engine)?.online ?? false;
+    if (!(oneOff ? targetOnline && !streaming && !loading : ready) || (action.kind !== "send" && chatId === null && !temporary)) return;
 
     const before = messages;
     // While the reply streams, the branch is cut where the new version starts.
@@ -388,7 +406,7 @@ export function Chat({
             ...(temporary && action.kind === "edit" && before[cut].files ? { files: before[cut].files } : {}),
           };
     const conversation = [...before.slice(0, cut), ...(sent ? [sent] : [])];
-    setMessages([...conversation, { role: "assistant", content: "", ...(temporary ? { id: localId() } : {}) }]);
+    setMessages([...conversation, { role: "assistant", content: "", engine: target.engine, model: target.model, ...(temporary ? { id: localId() } : {}) }]);
 
     const controller = new AbortController();
     const active = { controller, chatId: null as number | null };
@@ -398,14 +416,26 @@ export function Chat({
     let text = ""; // the reply so far
     let failure: string | null = null;
     try {
+      // Another model's limits and reasoning levels aren't those of the chat's model: ask for them first.
+      const sent = oneOff
+        ? fitSettings(
+            settings,
+            await fetch(`/api/engines/${encodeURIComponent(target.engine)}/show?model=${encodeURIComponent(target.model)}`, {
+              signal: controller.signal,
+            })
+              .then((r) => (r.ok ? (r.json() as Promise<ModelInfo>) : null))
+              .catch(() => null),
+          )
+        : effectiveSettings;
+      // A temporary chat sends the whole conversation, and keeps nothing: there is no chat model to keep.
       const res = temporary
         ? await fetch("/api/chat/temporary", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              engine: choice.engine,
-              model,
-              settings: effectiveSettings,
+              engine: target.engine,
+              model: target.model,
+              settings: sent,
               messages: conversation.map((m) => ({ role: m.role, content: m.content, ...(m.files ? { attachments: m.files } : {}) })),
             }),
             signal: controller.signal,
@@ -415,9 +445,10 @@ export function Chat({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chatId,
-              engine: choice.engine,
-              model,
-              settings: effectiveSettings,
+              engine: target.engine,
+              model: target.model,
+              settings: sent,
+              ...(oneOff ? { keepChatModel: true } : {}),
               ...(action.kind === "send"
                 ? { content: action.content, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }
                 : action.kind === "edit"
@@ -665,19 +696,38 @@ export function Chat({
                       {m.thinking && <Reasoning text={m.thinking} live={streaming && isLast && !m.content} ms={m.stats?.thinkingMs} />}
                       {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && !m.thinking && <TypingDots />}
                       {m.content && !(streaming && isLast) && (
-                        // The latest reply, and replies with versions, always show their actions; others on hover or focus.
+                        // The latest reply, replies with versions and, in a chat written by several models, every reply
+                        // naming its model always show their actions; others on hover or focus.
                         <div
                           className={`mt-1 flex flex-wrap items-center gap-1 transition-opacity ${
-                            isLast || m.versions ? "" : "opacity-0 focus-within:opacity-100 group-hover/msg:opacity-100"
+                            isLast || m.versions || (severalModels && m.model) ? "" : "opacity-0 focus-within:opacity-100 group-hover/msg:opacity-100"
                           }`}
                         >
                           {m.versions && <VersionNav versions={m.versions} disabled={streaming} onSelect={showVersion} />}
+                          {m.model && (m.versions || severalModels) && (
+                            <span
+                              data-testid="reply-model"
+                              title={`Written by ${m.model}${m.engine ? ` (${engines.find((e) => e.id === m.engine)?.name ?? m.engine})` : ""}`}
+                              className="max-w-[12rem] truncate px-1 font-mono text-xs text-muted"
+                            >
+                              {m.model}
+                            </span>
+                          )}
                           <CopyButton text={m.content} label="Copy" />
                           {isLast && m.id !== undefined && (
-                            <button onClick={() => void run({ kind: "regenerate", id: m.id! })} disabled={!ready} className={actionClass}>
-                              <RefreshIcon width={14} height={14} />
-                              Regenerate
-                            </button>
+                            <span className="flex items-center">
+                              <button onClick={() => void run({ kind: "regenerate", id: m.id! })} disabled={!ready} className={actionClass}>
+                                <RefreshIcon width={14} height={14} />
+                                Regenerate
+                              </button>
+                              <RegenerateMenu
+                                engines={engines}
+                                current={choice}
+                                disabled={streaming || loading}
+                                className={`${actionClass} -ml-1 px-1`}
+                                onPick={(other) => void run({ kind: "regenerate", id: m.id!, with: other })}
+                              />
+                            </span>
                           )}
                           {m.id !== undefined && !streaming && !temporary && (
                             <button

@@ -26,7 +26,8 @@ import type { ChatMessage } from "@/lib/types";
 // Streams a reply as NDJSON events (see ChatEvent). One of:
 //   { content }                new message at the end of the branch on screen (chatId null starts a chat)
 //   { content, editOf: id }    new version of a user message, then a reply to it
-//   { regenerate: id }         new version of a reply
+//   { regenerate: id }         new version of a reply; with keepChatModel: true, written by this model once,
+//                              while the chat goes on with the model it had ("Regenerate with…")
 //   { retry: true }            reply to a user message that has none
 // `engine` names the engine to use (the built-in Ollama when missing). Nothing is written until the engine
 // accepts the request, so a failed send leaves no trace. A new chat is created at that point and its id is
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
   const editOf = body.editOf ?? null;
   const regenerate = body.regenerate ?? null;
   const retry = body.retry === true;
+  const keepChatModel = body.keepChatModel ?? false;
   const sending = typeof body.content === "string";
   const modes = [sending, regenerate !== null, retry].filter(Boolean).length;
   const attachments = parseAttachments(body.attachments);
@@ -47,6 +49,8 @@ export async function POST(request: Request) {
     (chatId !== null && typeof chatId !== "number") ||
     (editOf !== null && (typeof editOf !== "number" || !sending)) ||
     (regenerate !== null && typeof regenerate !== "number") ||
+    typeof keepChatModel !== "boolean" ||
+    (keepChatModel && regenerate === null) ||
     modes !== 1 ||
     !model ||
     // A message needs text or a file, and only a message can carry files.
@@ -133,7 +137,7 @@ export async function POST(request: Request) {
     if (sending && attachments.length) addAttachments(answering, attachments);
     else if (sending && editOf !== null) copyAttachments(editOf, answering);
     const retitle = chat?.title === DEFAULT_TITLE && sending && editOf === null;
-    updateChat(id, { engine: engineId, model, settings, ...(retitle ? { title: placeholder } : {}) });
+    updateChat(id, { ...(keepChatModel ? {} : { engine: engineId, model }), settings, ...(retitle ? { title: placeholder } : {}) });
     return { id, answering };
   });
 
