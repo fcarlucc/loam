@@ -13,6 +13,7 @@ How the app talks to local AI servers. Which engines are supported and how to ad
 | Reasoning shown apart from the reply | ✓ | ✓ when the server sends it (`reasoning_content`) |
 | Reasoning off / on / level per chat | ✓ | set it in the server |
 | System prompt, temperature | ✓ | ✓ |
+| Compact a chat (summary of the older messages) | ✓ | ✓ by hand; the warning and "Compact automatically" need the context size, which these servers don't report: only with a context length saved in the chat |
 | Context length per chat | ✓ | set it in the server when loading the model |
 | Stats under a reply | tokens, speed, load time, context | tokens; speed as measured here (llama.cpp reports its own) |
 | Download, delete, memory, keep-alive, start and stop | ✓ | the server manages its models |

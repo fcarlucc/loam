@@ -14,7 +14,7 @@ export const thinkLabel = (v: ThinkValue) => (v === false ? "off" : v === true ?
 export function parseSettings(input: unknown): ChatSettings | null {
   if (input === undefined || input === null) return {};
   if (typeof input !== "object" || Array.isArray(input)) return null;
-  const { system, temperature, contextLength, think } = input as Record<string, unknown>;
+  const { system, temperature, contextLength, think, autoCompact } = input as Record<string, unknown>;
   const out: ChatSettings = {};
   if (system !== undefined) {
     if (typeof system !== "string" || system.length > SYSTEM_PROMPT_MAX) return null;
@@ -34,11 +34,15 @@ export function parseSettings(input: unknown): ChatSettings | null {
     if (!isThinkValue(think)) return null;
     out.think = think;
   }
+  if (autoCompact !== undefined) {
+    if (typeof autoCompact !== "boolean") return null;
+    if (autoCompact) out.autoCompact = true;
+  }
   return out;
 }
 
 export const hasCustomSettings = (s: ChatSettings) =>
-  s.system !== undefined || s.temperature !== undefined || s.contextLength !== undefined || s.think !== undefined;
+  s.system !== undefined || s.temperature !== undefined || s.contextLength !== undefined || s.think !== undefined || s.autoCompact !== undefined;
 
 // How long Ollama keeps a model in memory after a reply, in seconds (-1 = until Ollama stops).
 export const KEEP_ALIVE_DEFAULT = 300; // Ollama's own default

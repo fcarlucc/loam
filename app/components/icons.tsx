@@ -34,6 +34,10 @@ export const SendIcon = (p: SVGProps<SVGSVGElement>) => (
 export const MenuIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M4 6h16M4 12h16M4 18h16" /></svg>
 );
+// Two arrows pressing on a line: a conversation folded into its summary.
+export const CompactIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M12 3v6M9 6l3 3 3-3M12 21v-6M9 18l3-3 3 3M5 12h14" /></svg>
+);
 export const ChatIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M21 12a8 8 0 0 1-11.6 7.1L3 20l1-4.6A8 8 0 1 1 21 12z" /></svg>
 );

@@ -1,7 +1,8 @@
 "use client";
 
-import { type Dispatch, Fragment, type Ref, type SetStateAction, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { type Dispatch, Fragment, type Ref, type SetStateAction, useEffect, useEffectEvent, useImperativeHandle, useRef, useState } from "react";
 import { MAX_ATTACHMENTS, MAX_TOTAL_BYTES } from "@/lib/attachments";
+import { compactionRange } from "@/lib/compact";
 import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
@@ -13,6 +14,7 @@ import { acceptFor, AttachmentChips, blobOf, metaOf, readFiles, sizeOf, textToke
 import { CopyButton } from "./CopyButton";
 import {
   BranchIcon,
+  CompactIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   MenuIcon,
@@ -30,7 +32,7 @@ import { ModelPicker } from "./ModelPicker";
 import { Reasoning } from "./Reasoning";
 import { ReasoningPicker } from "./ReasoningPicker";
 import { RegenerateMenu } from "./RegenerateMenu";
-import { nearlyFull, StatsLine } from "./StatsLine";
+import { StatsLine } from "./StatsLine";
 import { SETTINGS_SIDEBAR_ID, SettingsSidebar } from "./SettingsSidebar";
 import { offlineLabel } from "./useEngines";
 
@@ -64,6 +66,13 @@ function fitSettings(settings: Settings, info: ModelInfo | null): Settings {
   return out;
 }
 
+// An engine that doesn't report its context size: the latest reply offers to compact from this many tokens.
+const UNKNOWN_CONTEXT_OFFER = 2048;
+// Past this share of the context, the oldest messages are about to be left out (as StatsLine shows it).
+const NEARLY_FULL = 0.9;
+// The largest context a compaction accepts (see /api/chats/[id]/compact).
+const MAX_CONTEXT = 1_048_576;
+
 // What a run asks for: a new message, a new version of a sent message, a new version of a reply (by
 // another model once, with `with`), or a reply to a message that has none.
 type Action =
@@ -82,7 +91,8 @@ export type ChatHandle = {
   regenerate: () => void;
   stop: () => void;
   toggleSettings: () => void;
-  state: () => { streaming: boolean; canRegenerate: boolean };
+  compact: () => void;
+  state: () => { streaming: boolean; canRegenerate: boolean; canCompact: boolean };
 };
 
 export function Chat({
@@ -144,6 +154,14 @@ export function Chat({
   const [settings, setSettings] = useState<Settings>(initialSettings);
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
   const [branching, setBranching] = useState(false);
+  // A compaction under way (see compact), and whether a message waits for it to be sent.
+  const [compacting, setCompacting] = useState(false);
+  const compactRef = useRef<AbortController | null>(null);
+  const sendAfterCompact = useRef(false);
+  // Shown while the summary is written: the message in the box waits for it (see sendDraft).
+  const [holding, setHolding] = useState(false);
+  // The summary of a compacted chat, opened under its marker.
+  const [summaryOpen, setSummaryOpen] = useState(false);
   // A message opened from search: scrolled into view and highlighted for a moment.
   const [highlight, setHighlight] = useState<number | null>(focusMessageId);
   // Files waiting in the composer, what was wrong with the last ones added, and whether files hover over the chat.
@@ -197,8 +215,15 @@ export function Chat({
     };
   }, [openedId]);
 
-  // Leaving this chat stops a reply that is still streaming; the server keeps what was already written.
-  useEffect(() => () => activeRef.current?.controller.abort(), []);
+  // Leaving this chat stops a reply that is still streaming (the server keeps what was already written)
+  // and a compaction still under way (nothing is kept).
+  useEffect(
+    () => () => {
+      activeRef.current?.controller.abort();
+      compactRef.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -270,7 +295,7 @@ export function Chat({
   const engine = engines.find((e) => e.id === choice.engine);
   const online = engine?.online ?? false;
   const model = choice.model;
-  const ready = online && !!model && !streaming && !loading;
+  const ready = online && !!model && !streaming && !loading && !compacting;
   const last = messages.at(-1);
   const canRetry = !streaming && (chatId !== null || temporary) && last?.role === "user";
   // In a branched chat, the last message copied from the chat it came from (-1 elsewhere).
@@ -278,9 +303,16 @@ export function Chat({
   // Replies name their model where it tells them apart: in a chat written by several, and between versions.
   const severalModels = new Set(messages.flatMap((m) => (m.role === "assistant" && m.model ? [`${m.engine}/${m.model}`] : []))).size > 1;
 
-  function sendDraft() {
+  function sendDraft(compacted = false) {
     const content = draft.trim();
     if (!ready || temporaryFull || (!content && !pending.length)) return; // a draft that can't be sent yet stays in the box
+    // Compacting first, when the chat asks for it: the message stays in the box until the summary is in.
+    if (!compacted && settings.autoCompact && nearlyFullNow && !compactedNow && canCompact) {
+      sendAfterCompact.current = true;
+      setHolding(true);
+      void compact();
+      return;
+    }
     const attachments = pending;
     onDraftChange("");
     setPending([]);
@@ -309,6 +341,24 @@ export function Chat({
       : temporaryBytes > MAX_TOTAL_BYTES
         ? TEMPORARY_FILES_TOO_BIG
         : null;
+  // Compacting. The latest summary on the branch, if any: the model reads it instead of the messages up to it.
+  const summaryAt = messages.findLastIndex((m) => m.summary);
+  const lastQuestion = messages.findLastIndex((m) => m.role === "user");
+  const lastReply = messages.findLast((m) => m.role === "assistant");
+  // Compacted since the latest reply, whose stats still count the messages now summarized.
+  const compactedNow = summaryAt >= 0 && summaryAt >= lastQuestion - 1;
+  const canCompact = chatId !== null && online && !!model && !streaming && !loading && !compacting && compactionRange(messages) !== null;
+  // Where the latest reply offers to compact: from half the context, until it is nearly full and the warning
+  // under it does. An engine that doesn't say how big its context is (OpenAI-compatible servers) offers it
+  // once the conversation is a few thousand tokens long; the warning and automatic compacting need the size.
+  const lastStats = lastReply?.stats;
+  const knownContext = lastStats?.contextSize ?? effectiveSettings.contextLength;
+  const contextFill = lastStats && knownContext ? lastStats.contextUsed / knownContext : null;
+  const nearlyFullNow = contextFill !== null && contextFill >= NEARLY_FULL;
+  const offerCompact = contextFill !== null ? contextFill >= 0.5 && !nearlyFullNow : (lastStats?.contextUsed ?? 0) >= UNKNOWN_CONTEXT_OFFER;
+  // The context a compaction plans its pieces for: the chat's own setting, or what the engine reported it
+  // loaded. Not the model's maximum: the model may be loaded with less. Unknown, the server assumes 4K.
+  const compactContext = effectiveSettings.contextLength ?? [...messages].reverse().find((m) => m.stats?.contextSize)?.stats?.contextSize;
 
   // What the attached text would take from the context the next reply has.
   const fileTokens = textTokens(pending);
@@ -333,6 +383,47 @@ export function Chat({
     try {
       const res = await fetch(`/api/chats/${chatId}/select`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messageId }),
+      });
+      if (res.ok) setMessages((await res.json()).messages as ChatMessage[]);
+    } catch {}
+  }
+
+  // Has the model summarize the older messages of the branch (see /api/chats/[id]/compact). Cancelling, or
+  // leaving the chat, stops it and keeps nothing.
+  async function compact() {
+    if (!canCompact || chatId === null) return;
+    const controller = new AbortController();
+    compactRef.current = controller;
+    setCompacting(true);
+    setError(null);
+    try {
+      const size = compactContext && Number.isInteger(compactContext) ? Math.min(Math.max(compactContext, 512), MAX_CONTEXT) : undefined;
+      const res = await fetch(`/api/chats/${chatId}/compact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ engine: choice.engine, model, ...(size ? { contextSize: size } : {}) }),
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Couldn't compact this chat");
+      setMessages(data.messages as ChatMessage[]);
+      setSummaryOpen(false);
+    } catch (e) {
+      if (!controller.signal.aborted) setError(`Couldn't compact this chat: ${describeError(e, false)}`);
+    } finally {
+      if (compactRef.current === controller) compactRef.current = null;
+      setCompacting(false);
+    }
+  }
+
+  // The model reads the summarized messages again.
+  async function undoCompact(messageId: number) {
+    if (chatId === null || streaming || compacting) return;
+    try {
+      const res = await fetch(`/api/chats/${chatId}/compact`, {
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messageId }),
       });
@@ -549,8 +640,20 @@ export function Chat({
     },
     stop: () => void stop(),
     toggleSettings,
-    state: () => ({ streaming, canRegenerate: regenerable !== null }),
+    compact: () => void compact(),
+    state: () => ({ streaming, canRegenerate: regenerable !== null, canCompact: canCompact && !compactedNow }),
   }));
+  // A message held back for an automatic compaction goes once it is done (also when it failed: the
+  // conversation is then sent as it is, like before).
+  const sendHeldMessage = useEffectEvent(() => {
+    setHolding(false);
+    sendDraft(true);
+  });
+  useEffect(() => {
+    if (compacting || !sendAfterCompact.current) return;
+    sendAfterCompact.current = false;
+    sendHeldMessage();
+  }, [compacting]);
 
   // Has the model name the chat (see /api/chats/[id]/title). Failing quietly is fine: the placeholder title stays.
   async function nameChat(id: number) {
@@ -663,7 +766,21 @@ export function Chat({
               {messages.map((m, i) => {
                 const isLast = i === messages.length - 1;
                 const key = m.id ?? `pending-${i}`;
-                const note = i === branchPoint && <BranchNote from={branchOf} onOpen={onOpenChat} />;
+                const note = (
+                  <>
+                    {i === branchPoint && <BranchNote from={branchOf} onOpen={onOpenChat} />}
+                    {i === summaryAt && (
+                      <SummaryNote
+                        summary={m.summary!}
+                        open={summaryOpen}
+                        onToggle={() => setSummaryOpen((o) => !o)}
+                        onUndo={streaming || compacting ? undefined : () => void undoCompact(m.id!)}
+                      />
+                    )}
+                  </>
+                );
+                // Messages the model now reads as a summary are dimmed.
+                const summarized = i <= summaryAt ? "opacity-60" : "";
                 if (m.role === "user") {
                   if (editing && m.id === editing.id) {
                     return (
@@ -681,7 +798,11 @@ export function Chat({
                   }
                   return (
                     <Fragment key={key}>
-                      <div data-testid="user-message" data-message-id={m.id} className="group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1">
+                      <div
+                        data-testid="user-message"
+                        data-message-id={m.id}
+                        className={`group/msg ml-auto flex max-w-[85%] flex-col items-end gap-1 ${summarized}`}
+                      >
                         {m.content && (
                           <div
                             className={`whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-accent-grad px-4 py-2.5 text-accent-fg transition-shadow ${
@@ -714,7 +835,7 @@ export function Chat({
                     <div
                       data-testid="assistant-message"
                       data-message-id={m.id}
-                      className={`group/msg max-w-[95%] rounded-xl transition-shadow ${
+                      className={`group/msg max-w-[95%] rounded-xl transition-shadow ${summarized} ${
                         highlight !== null && m.id === highlight ? "ring-2 ring-accent ring-offset-4 ring-offset-bg" : ""
                       }`}
                     >
@@ -765,20 +886,59 @@ export function Chat({
                               Branch
                             </button>
                           )}
+                          {isLast && canCompact && offerCompact && !compactedNow && (
+                            <button onClick={() => void compact()} title="Summarize the older messages to free context" className={actionClass}>
+                              <CompactIcon width={14} height={14} />
+                              Compact
+                            </button>
+                          )}
                           {m.stats && <StatsLine stats={m.stats} />}
                         </div>
                       )}
-                      {isLast && !streaming && nearlyFull(m.stats) && (
+                      {isLast && m === lastReply && !streaming && !compacting && nearlyFullNow && !compactedNow && (
                         <p className="mt-1 px-1.5 text-xs text-danger">
-                          This chat is close to the model&apos;s context limit: the oldest messages will be left out. Start a new chat,
-                          or raise the context length in the chat settings if the model allows it.
+                          This chat is close to the model&apos;s context limit: the oldest messages will be left out.{" "}
+                          {canCompact ? (
+                            <>
+                              <button onClick={() => void compact()} className="font-medium underline underline-offset-2 hover:text-fg">
+                                Compact the chat
+                              </button>{" "}
+                              {settings.autoCompact
+                                ? " now, or just send your next message: the chat is compacted before it goes."
+                                : " to have the model summarize them instead, or turn on automatic compacting in the chat settings."}
+                            </>
+                          ) : (
+                            <>Start a new chat, or raise the context length in the chat settings if the model allows it.</>
+                          )}
                         </p>
+                      )}
+                      {isLast && !streaming && compactedNow && (
+                        <p className="mt-1 px-1.5 text-xs text-muted">Compacted: the next reply reads the summary instead of the older messages.</p>
                       )}
                     </div>
                     {note}
                   </Fragment>
                 );
               })}
+              {compacting && (
+                <div role="status" className="flex items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm">
+                  <CompactIcon width={15} height={15} className="shrink-0 text-muted" />
+                  <span className="min-w-0 flex-1 text-muted">
+                    Summarizing the older messages…{holding && " Your message goes as soon as the summary is in."}
+                  </span>
+                  {/* Cancelling keeps the message in the box, unsent. */}
+                  <button
+                    onClick={() => {
+                      sendAfterCompact.current = false;
+                      setHolding(false);
+                      compactRef.current?.abort();
+                    }}
+                    className={actionClass}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
               {(error || canRetry) && (
                 <div
                   role={error ? "alert" : undefined}
@@ -889,7 +1049,7 @@ export function Chat({
                 </button>
               ) : (
                 <button
-                  onClick={sendDraft}
+                  onClick={() => sendDraft()}
                   disabled={!ready || !!temporaryFull || (!draft.trim() && !pending.length)}
                   aria-label="Send"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-grad text-accent-fg transition-opacity disabled:opacity-30"
@@ -933,6 +1093,33 @@ function BranchNote({ from, onOpen }: { from: { id: number; title: string } | nu
         <span>Branched from another chat</span>
       )}
       <span aria-hidden className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+// Where a compacted chat's summary takes over: the model reads it instead of the messages above.
+function SummaryNote({ summary, open, onToggle, onUndo }: { summary: string; open: boolean; onToggle: () => void; onUndo?: () => void }) {
+  return (
+    <div data-testid="summary-note" className="flex flex-col gap-2">
+      <div className="flex items-center gap-3 text-xs text-muted">
+        <span aria-hidden className="h-px flex-1 bg-border" />
+        <CompactIcon width={14} height={14} />
+        <span>Summarized above this line</span>
+        <button onClick={onToggle} aria-expanded={open} className="underline-offset-2 hover:text-fg hover:underline">
+          {open ? "Hide summary" : "Show summary"}
+        </button>
+        {onUndo && (
+          <button onClick={onUndo} title="The model reads these messages again" className="underline-offset-2 hover:text-fg hover:underline">
+            Undo
+          </button>
+        )}
+        <span aria-hidden className="h-px flex-1 bg-border" />
+      </div>
+      {open && (
+        <div aria-label="Summary" className="max-h-80 overflow-y-auto rounded-xl border border-border bg-surface-2 px-4 py-3 text-sm">
+          <Markdown>{summary}</Markdown>
+        </div>
+      )}
     </div>
   );
 }
