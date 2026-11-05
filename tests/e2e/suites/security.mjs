@@ -113,6 +113,11 @@ export function securitySuite(env) {
       assert.match(html, /<title>Loam<\/title>/);
       const remote = [...html.matchAll(/\b(?:src|href)="(https?:\/\/[^"]+)"/g)].map((m) => m[1]);
       assert.deepEqual(remote, [], "the page references remote resources");
+      // Nor can a reply make it load any: the browser refuses images, media, fonts and styles from elsewhere.
+      const csp = res.headers.get("content-security-policy") ?? "";
+      for (const directive of ["img-src 'self' data: blob:", "media-src 'self' data: blob:", "font-src 'self' data:", "style-src 'self' 'unsafe-inline'"]) {
+        assert.ok(csp.split(";").some((d) => d.trim() === directive), `the page's Content-Security-Policy lacks "${directive}": ${csp}`);
+      }
     });
 
     it("the database stays in the data directory the app was given", async () => {

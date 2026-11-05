@@ -22,6 +22,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run test:unit
       # API tests run against a fake Ollama with a throwaway database. The lifecycle tests need
       # Homebrew's real Ollama service, so they run locally only (npm run test:e2e).
       - run: npm run test:api

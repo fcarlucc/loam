@@ -181,6 +181,20 @@ html.theme-switching * {
 .prose-chat th, .prose-chat td { border: 1px solid var(--border); padding: 0.4em 0.75em; text-align: left; }
 .prose-chat th { background: var(--surface-2); font-weight: 600; }
 
+/* Math (KaTeX): a wide formula scrolls instead of widening the column */
+.prose-chat .katex { font-size: 1.1em; }
+.prose-chat .katex-display {
+  margin: 0.75em 0;
+  padding: 0.25em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.prose-chat .katex-error { font-family: var(--font-mono), monospace; font-size: 0.875em; }
+
+/* Mermaid diagrams: scaled down to the column, never wider */
+.mermaid-diagram { padding: 1rem; overflow-x: auto; }
+.mermaid-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+
 .code-block {
   border: 1px solid var(--border);
   border-radius: 12px;
