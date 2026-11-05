@@ -1,4 +1,4 @@
-import { inlineFiles, parseAttachments } from "@/lib/attachments";
+import { parseAttachments } from "@/lib/attachments";
 import { isModelId } from "@/lib/catalog";
 import {
   addAttachments,
@@ -19,8 +19,9 @@ import { acceptsModel, engineFailure, type ModelMessage, resolveEngine, type Str
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
 import { parseSettings } from "@/lib/settings";
+import { modelMessage, replyResponse } from "@/lib/reply";
 import { makeTitle } from "@/lib/title";
-import type { ChatEvent, ChatMessage, ReplyStats } from "@/lib/types";
+import type { ChatMessage } from "@/lib/types";
 
 // Streams a reply as NDJSON events (see ChatEvent). One of:
 //   { content }                new message at the end of the branch on screen (chatId null starts a chat)
@@ -82,16 +83,15 @@ export async function POST(request: Request) {
     userParent = getLeafId(chat.id);
   }
   const branchEnd = sending ? userParent : replyParent;
-  // Files travel with their message on every turn: text inside the message, images as images for models
-  // that can see. Engines refuse images on the others, so there they are left out: the model just doesn't
-  // see them (the chat may have moved to another model since).
+  // Files travel with their message on every turn (see modelMessage); images sent earlier are left out for a
+  // model that can't see (the chat may have moved to another model since).
   const capabilities = await engine.capabilities(model);
   const canSee = capabilities?.vision ?? true; // unknown (engine unreachable, or one that can't tell): let the engine decide
   if (!canSee && attachments.some((a) => a.kind === "image")) return jsonError(`${model} can't see images`, 400);
   const toModelMessage = (m: Pick<ChatMessage, "id" | "role" | "content" | "attachments">): ModelMessage => {
     if (!m.attachments?.length || m.id === undefined) return { role: m.role, content: m.content };
     const { files, images } = attachmentContents(m.id);
-    return { role: m.role, content: inlineFiles(m.content, files), ...(canSee && images.length ? { images } : {}) };
+    return modelMessage(m.role, m.content, files, images, canSee);
   };
   const history: ModelMessage[] = chat && branchEnd !== null ? getPath(chat.id, branchEnd).map(toModelMessage) : [];
   if (sending) {
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     const kept = editOf !== null && !attachments.length ? attachmentContents(editOf) : undefined;
     const files = kept?.files ?? attachments.filter((a) => a.kind === "text").map((a) => ({ name: a.name, text: a.data }));
     const images = kept?.images ?? attachments.filter((a) => a.kind === "image").map((a) => ({ data: a.data, type: a.type }));
-    history.push({ role: "user", content: inlineFiles(content, files), ...(canSee && images.length ? { images } : {}) });
+    history.push(modelMessage("user", content, files, images, canSee));
   }
   if (history.at(-1)?.role !== "user") return jsonError("Nothing to reply to", 400);
 
@@ -144,72 +144,23 @@ export async function POST(request: Request) {
     upstream.abort();
   };
   generations.set(id, stop);
-  const release = () => {
-    if (generations.get(id) === stop) generations.delete(id);
-  };
 
-  let reply = "";
-  let thinking = ""; // kept with the reply, shown under it, never sent back to the model
-  let saved = false;
-  const save = (stats?: ReplyStats) => {
-    if (saved) return;
-    saved = true;
-    if (!reply) return; // nothing generated: a regenerated reply keeps its previous version on screen
-    try {
-      // Also keeps partial replies (without stats).
-      addMessage(id, "assistant", reply, answering, { engine: engineId, model, stats, ...(thinking ? { thinking } : {}) });
-    } catch {
-      // The chat was deleted while the reply was streaming: nothing to keep.
-    }
-  };
-
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const send = (event: ChatEvent) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+  return replyResponse(events, {
+    upstream,
+    headers: { "X-Chat-Id": String(id) },
+    stopped: () => stoppedByUser,
+    // Also keeps partial replies (without stats). Nothing generated: a regenerated reply keeps its previous
+    // version on screen. Reasoning is kept with the reply, shown under it, never sent back to the model.
+    onEnd: ({ text, thinking, stats }) => {
+      if (!text) return;
       try {
-        let timings: ReplyStats | undefined;
-        let thinkingFrom: number | undefined; // when the first thought arrived, and when the reply itself began
-        let replyFrom: number | undefined;
-        for await (const event of events) {
-          if (event.type === "thinking") {
-            thinkingFrom ??= Date.now();
-            thinking += event.text;
-            send({ type: "thinking", text: event.text });
-          } else if (event.type === "content") {
-            replyFrom ??= Date.now();
-            reply += event.text;
-            send({ type: "delta", text: event.text });
-          } else {
-            timings = event.stats;
-          }
-        }
-        const endedAt = Date.now();
-        const stats = timings && thinkingFrom !== undefined ? { ...timings, thinkingMs: (replyFrom ?? endedAt) - thinkingFrom } : timings;
-        save(stats);
-        send({ type: "done", stats });
-        controller.close();
-      } catch (e) {
-        save();
-        try {
-          send(stoppedByUser ? { type: "done" } : { type: "error", message: e instanceof Error ? e.message : "The reply was interrupted." });
-          controller.close();
-        } catch {
-          // The client is gone.
-        }
-      } finally {
-        release();
+        addMessage(id, "assistant", text, answering, { engine: engineId, model, stats, ...(thinking ? { thinking } : {}) });
+      } catch {
+        // The chat was deleted while the reply was streaming: nothing to keep.
       }
     },
-    // The client disconnected: abort the engine and keep what was generated so far.
-    cancel() {
-      upstream.abort();
-      save();
-      release();
+    onFinally: () => {
+      if (generations.get(id) === stop) generations.delete(id);
     },
-  });
-
-  return new Response(stream, {
-    headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store", "X-Chat-Id": String(id) },
   });
 }

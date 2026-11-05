@@ -1,13 +1,14 @@
 "use client";
 
 import { type Dispatch, Fragment, type SetStateAction, useEffect, useRef, useState } from "react";
-import { MAX_ATTACHMENTS } from "@/lib/attachments";
+import { MAX_ATTACHMENTS, MAX_TOTAL_BYTES } from "@/lib/attachments";
 import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
 import { hasCustomSettings } from "@/lib/settings";
+import { MAX_TEMPORARY_MESSAGES, TEMPORARY_FILES_TOO_BIG, TEMPORARY_TOO_LONG } from "@/lib/temporary";
 import type { ChatEvent, ChatMessage, ChatSettings as Settings, ChatSummary, EngineModels, ModelChoice, ModelInfo, NewAttachment, Versions } from "@/lib/types";
-import { acceptFor, AttachmentChips, metaOf, readFiles, textTokens } from "./Attachments";
+import { acceptFor, AttachmentChips, blobOf, metaOf, readFiles, sizeOf, textTokens } from "./Attachments";
 import { CopyButton } from "./CopyButton";
 import {
   BranchIcon,
@@ -20,6 +21,7 @@ import {
   SendIcon,
   SlidersIcon,
   StopIcon,
+  TemporaryIcon,
   XIcon,
 } from "./icons";
 import { Markdown } from "./Markdown";
@@ -57,9 +59,14 @@ type Action =
   | { kind: "regenerate"; id: number }
   | { kind: "retry" };
 
+// A message as the page holds it. In a temporary chat `files` keeps the attached files themselves, since the
+// page sends the whole conversation with every message and the server keeps nothing.
+type Message = ChatMessage & { files?: NewAttachment[] };
 
 export function Chat({
   chatId,
+  temporary,
+  onTemporaryChange,
   focusMessageId,
   initialSettings,
   modelInfo,
@@ -81,6 +88,9 @@ export function Chat({
   onSettingsOpenChange,
 }: {
   chatId: number | null;
+  // A temporary chat is never saved: it lives in this view only and is gone once the user leaves it.
+  temporary: boolean;
+  onTemporaryChange: (on: boolean) => void;
   focusMessageId: number | null;
   initialSettings: Settings;
   modelInfo: ModelInfo | null;
@@ -103,7 +113,7 @@ export function Chat({
 }) {
   // The chat this view was opened on. A chat created here later is already on screen, so it isn't reloaded.
   const [openedId] = useState(chatId);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(openedId !== null);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +127,12 @@ export function Chat({
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Ids for the messages of a temporary chat, which the server never numbers: negative, so they can't clash.
+  const lastLocalId = useRef(0);
+  const localId = () => --lastLocalId.current;
+  // Links to a temporary chat's files (blob: URLs), released when the chat goes.
+  const fileUrls = useRef<string[]>([]);
+  useEffect(() => () => fileUrls.current.forEach((url) => URL.revokeObjectURL(url)), []);
 
   // The reply being streamed: its request, and the chat id once the server has accepted it.
   const activeRef = useRef<{ controller: AbortController; chatId: number | null } | null>(null);
@@ -232,13 +248,13 @@ export function Chat({
   const model = choice.model;
   const ready = online && !!model && !streaming && !loading;
   const last = messages.at(-1);
-  const canRetry = !streaming && chatId !== null && last?.role === "user";
+  const canRetry = !streaming && (chatId !== null || temporary) && last?.role === "user";
   // In a branched chat, the last message copied from the chat it came from (-1 elsewhere).
   const branchPoint = messages.findLastIndex((m) => m.copied);
 
   function sendDraft() {
     const content = draft.trim();
-    if (!ready || (!content && !pending.length)) return; // a draft that can't be sent yet stays in the box
+    if (!ready || temporaryFull || (!content && !pending.length)) return; // a draft that can't be sent yet stays in the box
     const attachments = pending;
     onDraftChange("");
     setPending([]);
@@ -257,6 +273,16 @@ export function Chat({
     setPending((p) => [...p, ...accepted].slice(0, MAX_ATTACHMENTS));
     setFileError(refused.length ? refused.join(" · ") : null);
   }
+
+  // A temporary chat goes whole with every message: past its limits, the server would refuse the next one.
+  const temporaryBytes = [...messages.flatMap((m) => m.files ?? []), ...pending].reduce((n, a) => n + sizeOf(a), 0);
+  const temporaryFull = !temporary
+    ? null
+    : messages.length + 1 > MAX_TEMPORARY_MESSAGES
+      ? TEMPORARY_TOO_LONG
+      : temporaryBytes > MAX_TOTAL_BYTES
+        ? TEMPORARY_FILES_TOO_BIG
+        : null;
 
   // What the attached text would take from the context the next reply has.
   const fileTokens = textTokens(pending);
@@ -325,7 +351,7 @@ export function Chat({
   }
 
   async function run(action: Action) {
-    if (!ready || (action.kind !== "send" && chatId === null)) return;
+    if (!ready || (action.kind !== "send" && chatId === null && !temporary)) return;
 
     const before = messages;
     // While the reply streams, the branch is cut where the new version starts.
@@ -341,12 +367,28 @@ export function Chat({
     setStreaming(true);
     followRef.current.force = true;
     // The files shown with the message while it is sent: the new ones, or those of the message being edited.
-    const files = action.kind === "send" ? action.attachments?.map(metaOf) : action.kind === "edit" ? before[cut].attachments : undefined;
-    setMessages([
-      ...before.slice(0, cut),
-      ...(content !== null ? [{ role: "user" as const, content, ...(files?.length ? { attachments: files } : {}) }] : []),
-      { role: "assistant", content: "" },
-    ]);
+    // In a temporary chat each file gets a link of its own, since the server never keeps it.
+    const shown = (a: NewAttachment) => {
+      if (!temporary) return metaOf(a);
+      const url = URL.createObjectURL(blobOf(a));
+      fileUrls.current.push(url);
+      return { ...metaOf(a), preview: url };
+    };
+    const files = action.kind === "send" ? action.attachments?.map(shown) : action.kind === "edit" ? before[cut].attachments : undefined;
+    // A temporary chat numbers its own messages and keeps their files, to send them again with the next ones.
+    const sent: Message | null =
+      content === null
+        ? null
+        : {
+            role: "user",
+            content,
+            ...(files?.length ? { attachments: files } : {}),
+            ...(temporary ? { id: localId() } : {}),
+            ...(temporary && action.kind === "send" && action.attachments?.length ? { files: action.attachments } : {}),
+            ...(temporary && action.kind === "edit" && before[cut].files ? { files: before[cut].files } : {}),
+          };
+    const conversation = [...before.slice(0, cut), ...(sent ? [sent] : [])];
+    setMessages([...conversation, { role: "assistant", content: "", ...(temporary ? { id: localId() } : {}) }]);
 
     const controller = new AbortController();
     const active = { controller, chatId: null as number | null };
@@ -356,30 +398,44 @@ export function Chat({
     let text = ""; // the reply so far
     let failure: string | null = null;
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chatId,
-          engine: choice.engine,
-          model,
-          settings: effectiveSettings,
-          ...(action.kind === "send"
-            ? { content: action.content, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }
-            : action.kind === "edit"
-              ? { content: action.content, editOf: action.id }
-              : action.kind === "regenerate"
-                ? { regenerate: action.id }
-                : { retry: true }),
-        }),
-        signal: controller.signal,
-      });
+      const res = temporary
+        ? await fetch("/api/chat/temporary", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              engine: choice.engine,
+              model,
+              settings: effectiveSettings,
+              messages: conversation.map((m) => ({ role: m.role, content: m.content, ...(m.files ? { attachments: m.files } : {}) })),
+            }),
+            signal: controller.signal,
+          })
+        : await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chatId,
+              engine: choice.engine,
+              model,
+              settings: effectiveSettings,
+              ...(action.kind === "send"
+                ? { content: action.content, ...(action.attachments?.length ? { attachments: action.attachments } : {}) }
+                : action.kind === "edit"
+                  ? { content: action.content, editOf: action.id }
+                  : action.kind === "regenerate"
+                    ? { regenerate: action.id }
+                    : { retry: true }),
+            }),
+            signal: controller.signal,
+          });
       if (!res.ok || !res.body) throw new Error((await res.json().catch(() => null))?.error ?? "Something went wrong");
       accepted = true;
-      const savedId = Number(res.headers.get("X-Chat-Id"));
-      active.chatId = Number.isSafeInteger(savedId) ? savedId : chatId;
-      if (chatId === null && active.chatId !== null) onChatCreated(active.chatId);
-      onChatsChanged(); // the message is saved: show the chat and its title in the sidebar right away
+      if (!temporary) {
+        const savedId = Number(res.headers.get("X-Chat-Id"));
+        active.chatId = Number.isSafeInteger(savedId) ? savedId : chatId;
+        if (chatId === null && active.chatId !== null) onChatCreated(active.chatId);
+        onChatsChanged(); // the message is saved: show the chat and its title in the sidebar right away
+      }
 
       for await (const event of readNdjson<ChatEvent>(res.body)) {
         if (controller.signal.aborted) break;
@@ -405,8 +461,15 @@ export function Chat({
       }
     } finally {
       // The reply ended while the user was in another app or tab: tell them, if they asked for it.
+      // A temporary chat's notification says nothing of the conversation: the system keeps notifications.
       if (accepted && !controller.signal.aborted && userIsAway()) {
-        notify(failure ? { title: "Reply failed", body: failure } : { title: titleRef.current || "Reply ready", body: snippet(text) });
+        notify(
+          failure
+            ? { title: "Reply failed", body: failure }
+            : temporary
+              ? { title: "Temporary chat", body: "The reply is ready." }
+              : { title: titleRef.current || "Reply ready", body: snippet(text) },
+        );
       }
       if (!accepted) {
         // Nothing was saved: restore the conversation and give the text and files back.
@@ -417,7 +480,8 @@ export function Chat({
         }
         if (action.kind === "edit") setEditing({ id: action.id, text: action.content });
       } else if (controller.signal.aborted || active.chatId === null || !(await loadBranch(active.chatId))) {
-        // Couldn't reload the saved branch: drop the empty bubble, or bring back the reply being regenerated.
+        // A temporary chat keeps the reply as it streamed. Otherwise the saved branch couldn't be reloaded.
+        // Either way: drop an empty bubble, or bring back the reply being regenerated.
         setMessages((m) => {
           const tail = m.at(-1);
           if (tail?.role !== "assistant" || tail.content) return m;
@@ -426,7 +490,7 @@ export function Chat({
       }
       if (activeRef.current === active) activeRef.current = null;
       setStreaming(false);
-      onChatsChanged();
+      if (!temporary) onChatsChanged();
       // In the background, so the composer is free right away; the sidebar picks the title up when it lands.
       if (finished && !controller.signal.aborted && firstReply && active.chatId !== null) void nameChat(active.chatId);
     }
@@ -470,6 +534,28 @@ export function Chat({
           <p data-testid="chat-title" className="min-w-0 flex-1 truncate text-sm font-medium text-muted">
             {title}
           </p>
+          {/* Only an empty new chat can be made temporary; once it has messages it says so, and stays so. */}
+          {temporary && messages.length > 0 ? (
+            <span data-testid="temporary-badge" className="flex h-8 items-center gap-1.5 px-2 text-xs text-accent">
+              <TemporaryIcon width={17} height={17} />
+              Temporary chat
+            </span>
+          ) : (
+            chatId === null &&
+            messages.length === 0 && (
+              <button
+                onClick={() => onTemporaryChange(!temporary)}
+                aria-pressed={temporary}
+                title={temporary ? "Save this chat as usual" : "Temporary chat: not saved, not searchable, gone once you leave it"}
+                className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs transition-colors hover:bg-surface-2 hover:text-fg ${
+                  temporary ? "text-accent" : "text-muted"
+                }`}
+              >
+                <TemporaryIcon width={17} height={17} />
+                <span className={temporary ? "" : "sr-only"}>Temporary chat</span>
+              </button>
+            )
+          )}
           <button
             ref={settingsToggleRef}
             onClick={toggleSettings}
@@ -492,13 +578,15 @@ export function Chat({
           ) : messages.length === 0 && !error ? (
             <div className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center gap-6 px-4 text-center">
               <div>
-                <h1 className="text-3xl font-semibold tracking-tight">How can I help?</h1>
+                <h1 className="text-3xl font-semibold tracking-tight">{temporary ? "Temporary chat" : "How can I help?"}</h1>
                 <p className="mt-2 text-muted">
-                  {online
-                    ? "Your local model is ready."
-                    : engine?.builtin
-                      ? "Ollama is stopped: start it from the sidebar to begin."
-                      : `${offlineLabel(engine)}: start it, or pick a model from another engine.`}
+                  {temporary
+                    ? "Not saved, not in search, not in your chat list. It's gone once you leave it."
+                    : online
+                      ? "Your local model is ready."
+                      : engine?.builtin
+                        ? "Ollama is stopped: start it from the sidebar to begin."
+                        : `${offlineLabel(engine)}: start it, or pick a model from another engine.`}
                 </p>
               </div>
               <div className="grid w-full gap-2 sm:grid-cols-2">
@@ -526,6 +614,7 @@ export function Chat({
                       <Fragment key={key}>
                         <EditMessage
                           initial={editing.text}
+                          note={temporary ? "Replaces this message and what follows." : "The original stays available as a version."}
                           disabled={!ready}
                           onCancel={() => setEditing(null)}
                           onSubmit={(text) => void run({ kind: "edit", id: editing.id, content: text })}
@@ -590,7 +679,7 @@ export function Chat({
                               Regenerate
                             </button>
                           )}
-                          {m.id !== undefined && !streaming && (
+                          {m.id !== undefined && !streaming && !temporary && (
                             <button
                               onClick={() => void branchFrom(m.id!)}
                               disabled={branching}
@@ -680,6 +769,7 @@ export function Chat({
                 </button>
               </p>
             )}
+            {temporaryFull && <p className="px-2 pb-1 text-xs text-danger">{temporaryFull}</p>}
             {filesTooBig && (
               <p className="px-2 pb-1 text-xs text-danger">
                 The attached text is about {formatTokens(fileTokens)} tokens, more than half of the {formatTokens(contextSize)} context:
@@ -725,7 +815,7 @@ export function Chat({
               ) : (
                 <button
                   onClick={sendDraft}
-                  disabled={!ready || (!draft.trim() && !pending.length)}
+                  disabled={!ready || !!temporaryFull || (!draft.trim() && !pending.length)}
                   aria-label="Send"
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-grad text-accent-fg transition-opacity disabled:opacity-30"
                 >
@@ -799,14 +889,17 @@ function VersionNav({ versions, disabled = false, onSelect }: { versions: Versio
   );
 }
 
-// Inline editor for a sent message. Sending it adds a new version; the original stays one click away.
+// Inline editor for a sent message. Sending it adds a new version; the original stays one click away
+// (in a temporary chat, which keeps no versions, it replaces the message).
 function EditMessage({
   initial,
+  note,
   disabled,
   onCancel,
   onSubmit,
 }: {
   initial: string;
+  note: string;
   disabled: boolean;
   onCancel: () => void;
   onSubmit: (text: string) => void;
@@ -853,7 +946,7 @@ function EditMessage({
         className="w-full resize-none bg-transparent px-2 py-1.5 text-[15px] outline-none"
       />
       <div className="flex items-center justify-end gap-2">
-        <span className="mr-auto px-2 text-xs text-muted">The original stays available as a version.</span>
+        <span className="mr-auto px-2 text-xs text-muted">{note}</span>
         <button onClick={onCancel} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-fg">
           Cancel
         </button>

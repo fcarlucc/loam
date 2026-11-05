@@ -25,6 +25,12 @@ export const metaOf = (a: NewAttachment): Attachment => ({
   size: sizeOf(a),
   ...(a.kind === "image" ? { preview: dataUrl(a) } : {}),
 });
+// The file itself, for a link that opens it while it exists only in the page (a temporary chat). Text opens as
+// plain text whatever its type, so the browser shows it instead of downloading it.
+export function blobOf(a: NewAttachment) {
+  if (a.kind === "text") return new Blob([a.data], { type: "text/plain;charset=utf-8" });
+  return new Blob([Uint8Array.from(atob(a.data), (c) => c.charCodeAt(0))], { type: a.type });
+}
 // Rough token count of the text files: what they will take from the model's context.
 export const textTokens = (list: NewAttachment[]) => list.reduce((n, a) => n + (a.kind === "text" ? Math.ceil(a.data.length / 4) : 0), 0);
 
@@ -99,7 +105,8 @@ function toBase64(blob: Blob) {
 }
 
 // The files of a message, or those about to be sent (then each has a remove button). Saved files open
-// in a new tab; a file whose message is still being sent has no link yet.
+// in a new tab, and so do a temporary chat's (from a blob: URL); a file whose message is still being sent has
+// no link yet.
 export function AttachmentChips({
   items,
   onRemove,
