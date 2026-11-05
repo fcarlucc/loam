@@ -16,6 +16,7 @@ import { enginesSuite } from "./suites/engines.mjs";
 import { ollamaSuite } from "./suites/ollama.mjs";
 import { securitySuite } from "./suites/security.mjs";
 import { settingsSuite } from "./suites/settings.mjs";
+import { temporarySuite } from "./suites/temporary.mjs";
 
 const env = {}; // { ollama, openai, openaiEngine, app, api, db }, filled in before the first test
 
@@ -42,6 +43,7 @@ after(async () => {
 
 securitySuite(env);
 chatSuite(env);
+temporarySuite(env);
 attachmentsSuite(env);
 chatsSuite(env);
 settingsSuite(env);

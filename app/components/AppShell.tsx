@@ -51,7 +51,8 @@ export function AppShell() {
   // `key` changes when another chat is opened, so Chat remounts with fresh state.
   // `id` alone changes when Chat saves the new conversation it is already showing.
   // `focus` is a message to scroll to and highlight once the chat is open (from search).
-  const [view, setView] = useState<{ key: number; id: number | null; focus?: number | null }>({ key: 0, id: null });
+  // `temporary` marks a new chat that is never saved; leaving it (any other view) discards it.
+  const [view, setView] = useState<{ key: number; id: number | null; focus?: number | null; temporary?: boolean }>({ key: 0, id: null });
   const [draft, setDraft] = useState("");
   // The engine and model messages are sent with.
   const [choice, setChoice] = useState<ModelChoice>({ engine: "", model: "" });
@@ -263,11 +264,13 @@ export function AppShell() {
             <Chat
               key={view.key}
               chatId={view.id}
+              temporary={!!view.temporary}
+              onTemporaryChange={(temporary) => setView((v) => ({ key: v.key + 1, id: null, temporary }))}
               focusMessageId={view.focus ?? null}
               initialSettings={defaults}
               modelInfo={modelInfo && modelInfo.choice.engine === choice.engine && modelInfo.choice.model === choice.model ? modelInfo.info : null}
               onSaveDefaults={saveDefaults}
-              title={current?.title ?? "New chat"}
+              title={current?.title ?? (view.temporary ? "Temporary chat" : "New chat")}
               branchOf={branchOf ? { id: branchOf.id, title: branchOf.title } : null}
               onBranched={openBranch}
               onOpenChat={open}

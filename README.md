@@ -47,6 +47,7 @@ Loam is the one in between: a fast, polished app for one person, the way I like 
 **History**
 - Chat list grouped by date, with full-text search across every message
 - Deleting a chat wipes its text from the database files, not just from the list
+- Temporary chats: never saved, never listed or searchable, gone once you leave them
 
 **Models**
 - Every local engine in one place: the model picker groups models by engine, and the sidebar shows which are running
