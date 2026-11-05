@@ -1,13 +1,11 @@
 "use client";
 
-import "katex/dist/katex.min.css";
-import { createContext, memo, useContext, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import type { Element, ElementContent } from "hast";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
-import rehypeKatex, { type Options as KatexOptions } from "rehype-katex";
+import type { Options as KatexOptions } from "rehype-katex";
 import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
 import { preprocessMath } from "@/lib/math";
 import { CopyButton } from "./CopyButton";
 import { MermaidBlock } from "./Mermaid";
@@ -21,9 +19,31 @@ const katexOptions: KatexOptions = {
   maxSize: 50,
 };
 
-const remarkPlugins = [remarkGfm, remarkMath];
-// KaTeX first, so math isn't taken for code to highlight.
-const rehypePlugins: Options["rehypePlugins"] = [[rehypeKatex, katexOptions], rehypeHighlight];
+type Plugins = { remark: Options["remarkPlugins"]; rehype: Options["rehypePlugins"] };
+const plain: Plugins = { remark: [remarkGfm], rehype: [rehypeHighlight] };
+
+// KaTeX (its code, its stylesheet and its fonts) loads with the first reply that has math in it, not with
+// the app: most replies have none. Until then the formulas show as text.
+let withMath: Plugins | null = null;
+let loading: Promise<void> | null = null;
+const loaded = new Set<() => void>();
+function loadMath() {
+  loading ??= Promise.all([import("remark-math"), import("rehype-katex"), import("katex/dist/katex.min.css")])
+    .then(([{ default: remarkMath }, { default: rehypeKatex }]) => {
+      // KaTeX first, so math isn't taken for code to highlight.
+      withMath = { remark: [remarkGfm, remarkMath], rehype: [[rehypeKatex, katexOptions], rehypeHighlight] };
+      loaded.forEach((notify) => notify());
+    })
+    .catch(() => {
+      loading = null; // try again with the next reply
+    });
+}
+const onMathLoaded = (notify: () => void) => {
+  loaded.add(notify);
+  return () => loaded.delete(notify);
+};
+// After preprocessMath every formula is written with dollars; ```math blocks are drawn by KaTeX too.
+const HAS_MATH = /\$|^[ \t>]*(?:```|~~~)[ \t]*math\b/m;
 
 // The markdown being shown, for the code blocks to tell whether they are complete yet.
 const Source = createContext("");
@@ -96,10 +116,16 @@ const components: Components = {
 // Memoized so earlier messages don't re-parse on every streamed token.
 export const Markdown = memo(function Markdown({ children }: { children: string }) {
   const source = preprocessMath(children);
+  const math = useSyncExternalStore(onMathLoaded, () => withMath, () => null);
+  const needsMath = HAS_MATH.test(source);
+  useEffect(() => {
+    if (needsMath && !math) loadMath();
+  }, [needsMath, math]);
+  const plugins = math && needsMath ? math : plain;
   return (
     <div className="prose-chat">
       <Source.Provider value={source}>
-        <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
+        <ReactMarkdown remarkPlugins={plugins.remark} rehypePlugins={plugins.rehype} components={components}>
           {source}
         </ReactMarkdown>
       </Source.Provider>

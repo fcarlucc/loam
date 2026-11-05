@@ -100,7 +100,8 @@ export function sanitizeSvg(markup: string): SVGSVGElement {
         (name !== "style" && value.includes("(") && (value.includes("\\") || !isLocalCss(value)));
       if (remove) el.removeAttributeNode(attr);
     }
-    if (el instanceof HTMLElement || el instanceof SVGElement) {
+    // Any element with inline styles: HTML, SVG and MathML (KaTeX in a label) alike.
+    if ("style" in el && el.style instanceof CSSStyleDeclaration) {
       cleanDeclarations(el.style);
       if (!el.style.length) el.removeAttribute("style");
     }

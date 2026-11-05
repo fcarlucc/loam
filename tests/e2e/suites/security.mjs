@@ -113,11 +113,28 @@ export function securitySuite(env) {
       assert.match(html, /<title>Loam<\/title>/);
       const remote = [...html.matchAll(/\b(?:src|href)="(https?:\/\/[^"]+)"/g)].map((m) => m[1]);
       assert.deepEqual(remote, [], "the page references remote resources");
-      // Nor can a reply make it load any: the browser refuses images, media, fonts and styles from elsewhere.
+      // Nor can a reply make it load any: the browser refuses anything from elsewhere, of every kind.
       const csp = res.headers.get("content-security-policy") ?? "";
-      for (const directive of ["img-src 'self' data: blob:", "media-src 'self' data: blob:", "font-src 'self' data:", "style-src 'self' 'unsafe-inline'"]) {
-        assert.ok(csp.split(";").some((d) => d.trim() === directive), `the page's Content-Security-Policy lacks "${directive}": ${csp}`);
+      const directives = csp.split(";").map((d) => d.trim());
+      for (const directive of [
+        "default-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "media-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "frame-src 'none'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+      ]) {
+        assert.ok(directives.includes(directive), `the page's Content-Security-Policy lacks "${directive}": ${csp}`);
       }
+      const script = directives.find((d) => d.startsWith("script-src "));
+      assert.match(script ?? "", /^script-src 'self' 'unsafe-inline'( 'unsafe-eval')?$/, "scripts only from the app");
+      // The API answers JSON: no policy needed there.
+      assert.equal((await fetch(`${env.app.url}/api/chats`)).headers.get("content-security-policy"), null);
     });
 
     it("the database stays in the data directory the app was given", async () => {

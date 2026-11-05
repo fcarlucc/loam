@@ -1,6 +1,9 @@
 // Math and diagrams in replies: formulas drawn with KaTeX, ```mermaid blocks drawn as diagrams, all of it
 // from the app itself, and nothing in a reply able to make the page load something from outside.
 import type { Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
+import { join } from "node:path";
 import { expect, test } from "./fixtures";
 import { chooseModel, lastReply, openApp, replies, say, send, sendButton, stopButton } from "./helpers";
 
@@ -157,4 +160,82 @@ test("KaTeX in a reply can't link or load anything", async ({ page }) => {
   const message = await reply(page, "See $\\href{https://example.com}{here}$ and $\\includegraphics{https://example.com/x.png}$.");
   await expect(message.locator("a")).toHaveCount(0);
   await expect(message.locator("img")).toHaveCount(0);
+});
+
+test("diagrams written to slip something past the cleaning still load nothing", async ({ page }) => {
+  await openApp(page);
+  const diagrams = [
+    // A theme's CSS can't be set by a diagram (it is on Mermaid's secure list).
+    ['%%{init: {"themeCSS": ".node rect { fill: url(https://example.com/t.png) }"}}%%', "flowchart LR", "  A[Themed] --> B"],
+    ["flowchart LR", "  A[Classed] --> B", "  classDef x fill:url(https://example.com/c.png)", "  class A x"],
+    ["flowchart LR", "  A[Styled] --> B", "  style A fill:url(https://example.com/s.png)"],
+    ["flowchart LR", '  A["<img src=https://example.com/l.png> Pictured"] --> B'],
+    ["flowchart LR", "  A[Scripted] --> B", '  click A href "javascript:alert(1)"'],
+  ];
+  for (const lines of diagrams) {
+    const message = await reply(page, mermaid(lines.join("\n")));
+    // Drawn or not, nothing reached outside (see the noInternet fixture), and nothing that could is left.
+    const svg = message.getByTestId("diagram").locator("svg");
+    await expect(svg.or(message.getByText(note))).toBeVisible();
+    if (await svg.count()) {
+      const markup = await svg.evaluate((el) => el.outerHTML);
+      expect(markup).not.toContain("example.com");
+      expect(markup).not.toContain("javascript:");
+      await expect(svg.locator("image, img")).toHaveCount(0);
+    } else {
+      await expect(message.getByText(note)).toBeVisible();
+    }
+  }
+});
+
+test("the SVG cleaning itself, on markup made to load things", async ({ page }) => {
+  await openApp(page);
+  // lib/svg.ts as it is, its types stripped, so the rules are tested apart from what Mermaid emits today.
+  const source = stripTypeScriptTypes(readFileSync(join(__dirname, "../../lib/svg.ts"), "utf8")).replace(/^export /gm, "");
+  await page.addScriptTag({ content: `${source}\nwindow.__sanitizeSvg = (m) => sanitizeSvg(m).outerHTML;` });
+  const clean = (markup: string) => page.evaluate((m) => (window as unknown as { __sanitizeSvg: (m: string) => string }).__sanitizeSvg(m), markup);
+
+  const out = await clean(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" onload="alert(1)">
+    <style>@import url(https://example.com/a.css); .a { fill: red } .b { background: url(https://example.com/b.png) }
+      @font-face { font-family: x; src: url(https://example.com/f.woff) } .c { background: url(#local) }</style>
+    <defs><linearGradient id="local"/></defs>
+    <rect class="a" fill="u\\rl(https://example.com/escaped)" stroke="url(#local)"/>
+    <rect style="fill: url(https://example.com/inline.png); stroke: blue"/>
+    <use xlink:href="https://example.com/s.svg#a"/><use href="#local"/>
+    <image href="https://example.com/i.png"/>
+    <filter><feImage href="https://example.com/f.png"/></filter>
+    <set attributeName="href" to="https://example.com/set"/>
+    <a href="javascript:alert(1)"><text>kept text</text></a>
+    <foreignObject><div><img src="https://example.com/img.png"/><span style="background-image: url(https://example.com/span.png)">label</span>
+      <math style="background: url(https://example.com/math.png)"><mi>x</mi></math></div></foreignObject>
+  </svg>`);
+  expect(out).not.toContain("example.com");
+  expect(out).not.toContain("javascript:");
+  expect(out).not.toMatch(/onload|<image|<img|<feimage|<set|@import|src:/i); // a @font-face may stay, without its src
+  // What refers to the drawing itself stays, and so does the text.
+  expect(out).toContain('href="#local"');
+  expect(out).toContain('stroke="url(#local)"');
+  expect(out).toContain("kept text");
+  expect(out).toContain("label");
+  expect(out).toMatch(/stroke: blue/);
+});
+
+test("KaTeX loads with the first reply that has math, not with the app", async ({ page }) => {
+  await openApp(page);
+  const katexRules = () =>
+    page.evaluate(() =>
+      [...document.styleSheets].some((sheet) => {
+        try {
+          // KaTeX's own fonts: the app's stylesheet styles .katex too.
+          return [...sheet.cssRules].some((rule) => rule.cssText.includes("KaTeX_Main"));
+        } catch {
+          return false;
+        }
+      }),
+    );
+  await reply(page, "Plain words, no formulas.");
+  expect(await katexRules()).toBe(false);
+  const message = await reply(page, "Now $x^2$.");
+  await expect(message.locator(".katex")).toHaveCount(1);
+  expect(await katexRules()).toBe(true);
 });

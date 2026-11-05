@@ -13,7 +13,8 @@ enforced, and how to report a problem.
 - **Replies can't phone home.** Images in model replies are shown as links and never loaded automatically. Math and
   Mermaid diagrams are drawn by libraries bundled with the app; a diagram is cleaned of images, outside links and
   styles that point elsewhere before it is shown, and the page's Content Security Policy makes the browser refuse
-  images, fonts, styles and media from anywhere but the app, whatever a reply contains.
+  anything from anywhere but the app (images, fonts, styles, media, fetches, frames, workers), whatever a reply
+  contains.
 - **Deleted means deleted.** Deleting a chat also wipes its text from the database files (SQLite `secure_delete`).
 - **Temporary chats leave no trace.** A temporary chat is never written to the database: the page holds it in memory
   and it is gone once you leave it. Its notifications don't quote it.

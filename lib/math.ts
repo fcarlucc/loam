@@ -1,6 +1,8 @@
 // Models write math as $…$, $$…$$, \(…\) or \[…\], and remark-math only reads dollars. This rewrites a reply
 // so that it does: the backslash forms become dollars, and a dollar that doesn't pair up is escaped, so a
 // price ("$5 and $10") or a formula still streaming in shows as plain text. Code is left exactly as written.
+// Links are not: a lone dollar in a URL (https://x/?a=$b) is escaped too, which may break that link. Rare in
+// model output, and fenced or inline code keeps one intact.
 
 // A fence line, also inside a blockquote or a list item.
 const FENCE = /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(`{3,}|~{3,})/;
