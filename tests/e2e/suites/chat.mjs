@@ -139,6 +139,8 @@ export function chatSuite(env) {
         "bad settings": [{ chatId: null, content: "x", model: MODEL, settings: { temperature: 5 } }, 400],
         "settings not an object": [{ chatId: null, content: "x", model: MODEL, settings: [1] }, 400],
         "system prompt too long": [{ chatId: null, content: "x", model: MODEL, settings: { system: "a".repeat(8001) } }, 400],
+        "keepChatModel without regenerate": [{ chatId: existing, content: "x", keepChatModel: true, model: MODEL }, 400],
+        "keepChatModel not a boolean": [{ chatId: existing, regenerate: 1, keepChatModel: "yes", model: MODEL }, 400],
       };
       for (const [name, [body, status]] of Object.entries(cases)) {
         const res = await env.api.post("/api/chat", body);
@@ -209,6 +211,51 @@ export function chatSuite(env) {
       assert.equal(back.data.messages.at(-1).versions.index, 0);
       await select(c, tail.id);
       checkTree(c, "after regenerating");
+    });
+
+    it("replies name the model that wrote them", async () => {
+      const path = await branch(c);
+      for (const m of path) {
+        if (m.role === "assistant") assert.deepEqual([m.engine, m.model], ["ollama", MODEL]);
+        else assert.ok(!("model" in m) && !("engine" in m), "user messages have no model");
+      }
+    });
+
+    it("regenerating with another model once keeps the chat's model", async () => {
+      const before = await branch(c);
+      const last = before.at(-1);
+      const chatBefore = env.db.chat(c);
+      const r = await chat(env.api, { chatId: c, regenerate: last.id, model: THINKER, keepChatModel: true, settings: { think: false } });
+      assert.equal(r.status, 200);
+      assert.equal(env.ollama.lastChat().body.model, THINKER);
+      assert.equal(env.ollama.lastChat().body.messages.length, before.length - 1, "the same branch, up to the user message");
+
+      const path = await branch(c);
+      const tail = path.at(-1);
+      assert.deepEqual([tail.engine, tail.model], ["ollama", THINKER]);
+      assert.equal(tail.versions.ids.length, last.versions.ids.length + 1);
+      assert.equal(tail.versions.index, tail.versions.ids.length - 1);
+      assert.equal(env.db.messages(c).find((m) => m.id === tail.id).model, THINKER);
+      const row = env.db.chat(c);
+      assert.deepEqual([row.engine, row.model], [chatBefore.engine, chatBefore.model], "the chat goes on with its own model");
+
+      // The previous version still says who wrote it.
+      const back = await select(c, last.id);
+      assert.equal(back.data.messages.at(-1).model, MODEL);
+
+      // Another engine works the same way.
+      const elsewhere = await chat(env.api, { chatId: c, regenerate: last.id, engine: env.openaiEngine, model: "fake-7b", keepChatModel: true });
+      assert.equal(elsewhere.status, 200);
+      const written = (await branch(c)).at(-1);
+      assert.deepEqual([written.engine, written.model], [env.openaiEngine, "fake-7b"]);
+      assert.equal(env.db.chat(c).engine, chatBefore.engine);
+
+      // Without keepChatModel, regenerating with another model makes it the chat's model, as before.
+      await chat(env.api, { chatId: c, regenerate: last.id, model: THINKER });
+      assert.equal(env.db.chat(c).model, THINKER);
+      await chat(env.api, { chatId: c, regenerate: last.id, model: MODEL });
+      assert.equal(env.db.chat(c).model, MODEL);
+      checkTree(c, "after regenerating with other models");
     });
 
     it("a failed regenerate or edit changes nothing", async () => {

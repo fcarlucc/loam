@@ -54,10 +54,13 @@ export type NewAttachment = { name: string; type: string; kind: AttachmentKind; 
 // A message on the chat's active branch. `id` is missing until the server has saved it.
 // `thinking` is what a reasoning model thought before the reply: shown, never sent back to the model.
 // `copied` marks the messages a branched chat started with (copied from the chat it was branched off).
+// `engine` and `model` say who wrote a reply (unknown for replies saved before the app kept track).
 export type ChatMessage = {
   id?: number;
   role: Role;
   content: string;
+  engine?: string;
+  model?: string;
   attachments?: Attachment[];
   thinking?: string;
   stats?: ReplyStats;

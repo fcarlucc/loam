@@ -38,6 +38,7 @@ Loam is the one in between: a fast, polished app for one person, the way I like 
 **Chat**
 - Streaming replies with Markdown and syntax-highlighted code; stop, regenerate, retry
 - Edit a sent message or regenerate a reply: every version is kept, switch between them with ◀ 2/3 ▶
+- Regenerate a reply with another model, from any engine, to compare: the new version says which model wrote it
 - Branch a conversation from any reply into a new chat
 - Reasoning models: turn reasoning off, on or to a level per chat, and read what the model thought
 - Text, code and image attachments, kept with the chat and deleted with it

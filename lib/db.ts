@@ -220,6 +220,8 @@ type MessageRow = {
   stats: string | null;
   thinking: string | null;
   copied: number;
+  engine: string | null;
+  model: string | null;
 };
 
 const CHAT_COLUMNS = "id, title, engine, model, settings, branch_of, created_at, updated_at";
@@ -274,7 +276,7 @@ export function deleteChat(id: number) {
 
 function messageRows(chatId: number) {
   return db()
-    .prepare("SELECT id, parent_id, role, content, stats, thinking, copied FROM messages WHERE chat_id = ? ORDER BY id")
+    .prepare("SELECT id, parent_id, role, content, stats, thinking, copied, engine, model FROM messages WHERE chat_id = ? ORDER BY id")
     .all(chatId) as MessageRow[];
 }
 
@@ -310,6 +312,7 @@ export function getPath(chatId: number, leafId: number | null = getLeafId(chatId
       id: row.id,
       role: row.role,
       content: row.content,
+      ...(row.role === "assistant" && row.model ? { model: row.model, ...(row.engine ? { engine: row.engine } : {}) } : {}),
       ...(files ? { attachments: files } : {}),
       ...(row.thinking ? { thinking: row.thinking } : {}),
       ...(stats ? { stats } : {}),
