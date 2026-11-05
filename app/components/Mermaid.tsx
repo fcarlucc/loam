@@ -84,7 +84,14 @@ export function MermaidBlock({ code, complete, children }: { code: string; compl
   const cached = useMemo(() => drawn.get(key)?.cloneNode(true) as SVGSVGElement | undefined, [key]);
 
   useEffect(() => {
-    if (drawn.has(key)) return;
+    // Drawn meanwhile (by this block before it was mounted again, say, while the reply was saved): the copy
+    // read while rendering may predate it, so it is taken from the cache here.
+    const ready = drawn.get(key);
+    if (ready) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the drawing landed in a cache outside React
+      if (!cached) setLast({ key, svg: ready.cloneNode(true) as SVGSVGElement });
+      return;
+    }
     let cancelled = false;
     // Not on every streamed token: once the code has been still for a moment.
     const timer = setTimeout(
@@ -104,7 +111,7 @@ export function MermaidBlock({ code, complete, children }: { code: string; compl
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [key, code, theme, complete]);
+  }, [key, code, theme, complete, cached]);
 
   const svg = cached ?? last?.svg ?? null;
   const failed = !svg && last?.key === key;
