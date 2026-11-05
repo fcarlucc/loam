@@ -1,10 +1,11 @@
 "use client";
 
-import { type Dispatch, Fragment, type SetStateAction, useEffect, useRef, useState } from "react";
+import { type Dispatch, Fragment, type Ref, type SetStateAction, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { MAX_ATTACHMENTS, MAX_TOTAL_BYTES } from "@/lib/attachments";
 import { formatTokens } from "@/lib/format";
 import { readNdjson } from "@/lib/ndjson";
 import { notify, snippet, userIsAway } from "@/lib/notify";
+import { keysOf } from "@/lib/shortcuts";
 import { hasCustomSettings } from "@/lib/settings";
 import { MAX_TEMPORARY_MESSAGES, TEMPORARY_FILES_TOO_BIG, TEMPORARY_TOO_LONG } from "@/lib/temporary";
 import type { ChatEvent, ChatMessage, ChatSettings as Settings, ChatSummary, EngineModels, ModelChoice, ModelInfo, NewAttachment, Versions } from "@/lib/types";
@@ -75,7 +76,17 @@ type Action =
 // page sends the whole conversation with every message and the server keeps nothing.
 type Message = ChatMessage & { files?: NewAttachment[] };
 
+// What the app's shortcuts and command palette can do in the chat on screen.
+export type ChatHandle = {
+  focusComposer: () => void;
+  regenerate: () => void;
+  stop: () => void;
+  toggleSettings: () => void;
+  state: () => { streaming: boolean; canRegenerate: boolean };
+};
+
 export function Chat({
+  ref,
   chatId,
   temporary,
   onTemporaryChange,
@@ -99,6 +110,7 @@ export function Chat({
   settingsOpen,
   onSettingsOpenChange,
 }: {
+  ref?: Ref<ChatHandle>;
   chatId: number | null;
   // A temporary chat is never saved: it lives in this view only and is gone once the user leaves it.
   temporary: boolean;
@@ -527,6 +539,19 @@ export function Chat({
     }
   }
 
+  // The latest reply, when it can be written again.
+  const regenerable = last?.role === "assistant" && last.id !== undefined && ready ? last.id : null;
+
+  useImperativeHandle(ref, () => ({
+    focusComposer: () => textareaRef.current?.focus(),
+    regenerate: () => {
+      if (regenerable !== null) void run({ kind: "regenerate", id: regenerable });
+    },
+    stop: () => void stop(),
+    toggleSettings,
+    state: () => ({ streaming, canRegenerate: regenerable !== null }),
+  }));
+
   // Has the model name the chat (see /api/chats/[id]/title). Failing quietly is fine: the placeholder title stays.
   async function nameChat(id: number) {
     try {
@@ -874,7 +899,7 @@ export function Chat({
               )}
             </div>
           </div>
-          <p className="mt-2 text-center text-xs text-muted">Enter to send · Shift+Enter for a new line</p>
+          <p className="mt-2 text-center text-xs text-muted">Enter to send · Shift+Enter for a new line · {keysOf("palette")} for commands</p>
         </div>
       </div>
       <SettingsSidebar

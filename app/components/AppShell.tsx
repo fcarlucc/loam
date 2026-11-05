@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { BUILTIN_OLLAMA_ID } from "@/lib/engines/presets";
+import { isMac, keysOf, matches, SHORTCUTS, type ShortcutId } from "@/lib/shortcuts";
+import { getPref, setPref, type ThemePref } from "@/lib/theme";
 import type { ChatSettings, ChatSummary, EngineModels, ModelChoice, ModelInfo } from "@/lib/types";
-import { Chat } from "./Chat";
+import { Chat, type ChatHandle } from "./Chat";
+import { type Command, CommandPalette, type PaletteMode, ShortcutsDialog } from "./CommandPalette";
 import { CompareView } from "./CompareView";
 import { DashboardView } from "./DashboardView";
 import { EnginesDialog } from "./EnginesDialog";
@@ -27,6 +30,75 @@ function savedChoice(): ModelChoice | null {
 }
 
 const offers = (engines: EngineModels[], c: ModelChoice) => engines.some((e) => e.id === c.engine && e.models.includes(c.model));
+
+// What the palette offers, given the chat's state when it opened. Chats and models are found by their ids
+// ("chat:12", "model:[engine, model]"), which AppShell's runCommand reads back.
+function paletteItems({
+  chat,
+  chats,
+  engines,
+  choice,
+  openChatId,
+  canManageModels,
+}: {
+  chat: ReturnType<ChatHandle["state"]> | undefined; // undefined when no chat is on screen
+  chats: ChatSummary[];
+  engines: EngineModels[];
+  choice: ModelChoice;
+  openChatId: number | null;
+  canManageModels: boolean;
+}) {
+  const theme = getPref();
+  const commands: Command[] = [
+    { id: "new-chat", group: "Actions", label: "New chat", keys: keysOf("newChat") },
+    { id: "new-temporary-chat", group: "Actions", label: "New temporary chat", keywords: "private incognito not saved" },
+    { id: "search", group: "Actions", label: "Search chats", keys: keysOf("search"), keywords: "find messages" },
+    ...(chat?.streaming ? [] : [{ id: "model", group: "Actions", label: "Change model…", keys: keysOf("model"), keywords: "switch engine", opens: "models" as const }]),
+    ...(chat?.canRegenerate
+      ? [{ id: "regenerate", group: "Actions", label: "Regenerate the latest reply", keys: keysOf("regenerate"), keywords: "retry again" }]
+      : []),
+    ...(chat?.streaming ? [{ id: "stop", group: "Actions", label: "Stop generating", keys: keysOf("stop") }] : []),
+    ...(chat ? [{ id: "settings", group: "Actions", label: "Chat settings", keywords: "system prompt temperature context reasoning" }] : []),
+    { id: "composer", group: "Actions", label: "Focus the message box", keys: keysOf("focusComposer"), keywords: "write type" },
+    { id: "compare", group: "Go to", label: "Compare models", keywords: "side by side" },
+    { id: "dashboard", group: "Go to", label: "Usage & benchmark", keywords: "stats speed dashboard" },
+    ...(canManageModels ? [{ id: "models", group: "Go to", label: "Models & memory", keywords: "download delete unload" }] : []),
+    { id: "engines", group: "Go to", label: "Engines", keywords: "ollama lm studio llama.cpp mlx server" },
+    { id: "theme:light", group: "Theme", label: "Light theme", current: theme === "light" },
+    { id: "theme:dark", group: "Theme", label: "Dark theme", current: theme === "dark" },
+    { id: "theme:system", group: "Theme", label: "Match system theme", current: theme === "system" },
+    { id: "help", group: "Help", label: "Keyboard shortcuts", keys: keysOf("help") },
+  ];
+  const chatItems: Command[] = chats.map((c) => ({
+    id: `chat:${c.id}`,
+    group: "Chats",
+    label: c.title,
+    current: c.id === openChatId,
+  }));
+  const online = engines.filter((e) => e.online);
+  const modelItems: Command[] = chat?.streaming
+    ? []
+    : online.flatMap((e) =>
+        e.models.map((m) => ({
+          id: `model:${JSON.stringify([e.id, m])}`,
+          group: "Models",
+          label: m,
+          hint: online.length > 1 ? e.name : undefined,
+          keywords: e.name,
+          current: e.id === choice.engine && m === choice.model,
+        })),
+      );
+  return { commands, chats: chatItems, models: modelItems };
+}
+
+// Escape stops a reply when it comes from the chat itself (the message box, the conversation, or the page as
+// a whole), not when it closes or cancels something of its own: the sidebar's search, a rename, a drawer.
+function escapeStops(target: EventTarget | null) {
+  if (!(target instanceof Element) || target === document.body) return true;
+  if (target.closest("aside")) return false;
+  if (target.matches('textarea[aria-label="Message"]')) return true;
+  return !!target.closest("main") && !target.matches("input, textarea, select, [contenteditable]");
+}
 
 export function AppShell() {
   const { engines, loaded: enginesLoaded, refresh: refreshEngines } = useEngines();
@@ -59,6 +131,11 @@ export function AppShell() {
   // Settings new chats start with (stored in SQLite, so they survive a port change).
   const [defaults, setDefaults] = useState<ChatSettings | null>(null);
   const [modelInfo, setModelInfo] = useState<{ choice: ModelChoice; info: ModelInfo } | null>(null);
+  // The command palette (⌘K, or its model list with ⇧⌘L), the list of shortcuts (⌘/), and the chat they act on.
+  // `chat` is the chat's state when the palette opened: what it can offer (regenerate, stop…).
+  const [palette, setPalette] = useState<{ mode: PaletteMode; chat?: ReturnType<ChatHandle["state"]> } | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const chatRef = useRef<ChatHandle>(null);
 
   const refreshChats = useCallback(async () => {
     try {
@@ -206,10 +283,90 @@ export function AppShell() {
     await refreshChats();
   };
 
+  // The search box of the sidebar on screen; on a small window the sidebar is a drawer, opened first.
+  const focusSearch = () => {
+    const visible = () =>
+      [...document.querySelectorAll<HTMLInputElement>('input[aria-label="Search chats"]')].find((el) => el.offsetParent !== null);
+    const box = visible();
+    if (box) return box.focus();
+    setMobileOpen(true);
+    setTimeout(() => visible()?.focus(), 0);
+  };
+
+  const focusComposer = () => {
+    setMobileOpen(false);
+    if (screen === "chat") return chatRef.current?.focusComposer();
+    setScreen("chat");
+    setTimeout(() => chatRef.current?.focusComposer(), 0);
+  };
+
+  const openPalette = (mode: PaletteMode) => setPalette({ mode, chat: screen === "chat" ? chatRef.current?.state() : undefined });
+
+  // Shortcuts work from anywhere on the page, the message box included, but not over a dialog: it has the keyboard.
+  const onShortcut = useEffectEvent((e: KeyboardEvent) => {
+    if (e.defaultPrevented || document.querySelector("dialog[open]")) return;
+    const mac = isMac();
+    const is = (id: ShortcutId) => matches(e, id, mac);
+    const handle = (action: () => void) => {
+      e.preventDefault();
+      action();
+    };
+    const chat = chatRef.current?.state();
+    if (is("palette")) handle(() => openPalette("all"));
+    else if (is("newChat")) handle(() => open(null));
+    else if (is("search")) handle(focusSearch);
+    else if (is("model")) handle(() => !chat?.streaming && openPalette("models"));
+    else if (is("help")) handle(() => setShortcutsOpen(true));
+    else if (is("focusComposer")) handle(focusComposer);
+    else if (is("regenerate") && screen === "chat") handle(() => chatRef.current?.regenerate());
+    else if (is("stop") && screen === "chat" && chat?.streaming && escapeStops(e.target)) handle(() => chatRef.current?.stop());
+  });
+  useEffect(() => {
+    document.addEventListener("keydown", onShortcut);
+    return () => document.removeEventListener("keydown", onShortcut);
+  }, []);
+
+  function runCommand(id: string) {
+    if (id.startsWith("chat:")) return open(Number(id.slice(5)));
+    if (id.startsWith("model:")) {
+      const [engine, model] = JSON.parse(id.slice(6)) as [string, string];
+      return choose({ engine, model });
+    }
+    if (id.startsWith("theme:")) return setPref(id.slice(6) as ThemePref);
+    const actions: Record<string, () => void> = {
+      "new-chat": () => open(null),
+      // An empty new chat, switched to temporary like the header's toggle does, from whatever was on screen.
+      "new-temporary-chat": () => {
+        setMobileOpen(false);
+        setScreen("chat");
+        setView((v) => ({ key: v.key + 1, id: null, temporary: true }));
+      },
+      search: focusSearch,
+      regenerate: () => chatRef.current?.regenerate(),
+      stop: () => chatRef.current?.stop(),
+      settings: () => chatRef.current?.toggleSettings(),
+      composer: focusComposer,
+      compare: () => setScreen("compare"),
+      dashboard: () => setScreen("dashboard"),
+      models: () => setModelsOpen(true),
+      engines: () => setEnginesOpen(true),
+      help: () => setShortcutsOpen(true),
+    };
+    actions[id]?.();
+  }
+
   const current = chats.find((c) => c.id === view.id);
   const branchOf = current?.branch_of != null ? chats.find((c) => c.id === current.branch_of) : undefined;
   // The models panel manages the Ollama in use, or the built-in one when another kind of engine is selected.
   const managed = engine?.kind === "ollama" ? engine : engines.find((e) => e.id === BUILTIN_OLLAMA_ID);
+
+  // Built again only when what it lists changes, not on every status poll, so the list keeps its place.
+  const openChatId = screen === "chat" ? view.id : null;
+  const canManageModels = !!managed;
+  const paletteContent = useMemo(
+    () => palette && paletteItems({ chat: palette.chat, chats, engines, choice, openChatId, canManageModels }),
+    [palette, chats, engines, choice, openChatId, canManageModels],
+  );
 
   const sidebar = (
     <Sidebar
@@ -262,6 +419,7 @@ export function AppShell() {
         ) : (
           defaults && (
             <Chat
+              ref={chatRef}
               key={view.key}
               chatId={view.id}
               temporary={!!view.temporary}
@@ -295,6 +453,15 @@ export function AppShell() {
         <ModelsDialog engine={managed} onClose={() => setModelsOpen(false)} onModelsChanged={() => void refreshEngines()} />
       )}
       {enginesOpen && <EnginesDialog engines={engines} onClose={() => setEnginesOpen(false)} onChanged={() => void refreshEngines()} />}
+      {palette && (
+        <CommandPalette {...paletteContent!} initialMode={palette.mode} onRun={runCommand} onClose={() => setPalette(null)} />
+      )}
+      {shortcutsOpen && (
+        <ShortcutsDialog
+          shortcuts={(Object.keys(SHORTCUTS) as ShortcutId[]).map((id) => ({ label: SHORTCUTS[id].label, keys: keysOf(id) }))}
+          onClose={() => setShortcutsOpen(false)}
+        />
+      )}
     </div>
   );
 }
