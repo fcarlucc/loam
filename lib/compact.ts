@@ -32,7 +32,9 @@ export function compactionRange(path: Pick<ChatMessage, "role" | "summary">[]) {
 }
 
 // Characters of conversation per summarizing request, for a model reading `contextTokens` at most: room is
-// kept for the instructions, the summary so far and the new summary. Three characters per token, to be safe.
+// kept for the instructions, the summary so far and the new summary. Three characters per token is safe for
+// English and most European languages (about four in practice); Chinese, Japanese or Korean text runs closer
+// to one, so a piece of it can overflow the context, and the engine then drops the start of that piece.
 export function chunkBudget(contextTokens: number, summaryTokens: number) {
   return Math.max(2000, (contextTokens - 2 * summaryTokens - 400) * 3);
 }

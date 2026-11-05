@@ -32,7 +32,7 @@ import { ModelPicker } from "./ModelPicker";
 import { Reasoning } from "./Reasoning";
 import { ReasoningPicker } from "./ReasoningPicker";
 import { RegenerateMenu } from "./RegenerateMenu";
-import { nearlyFull, StatsLine } from "./StatsLine";
+import { StatsLine } from "./StatsLine";
 import { SETTINGS_SIDEBAR_ID, SettingsSidebar } from "./SettingsSidebar";
 import { offlineLabel } from "./useEngines";
 
@@ -65,6 +65,13 @@ function fitSettings(settings: Settings, info: ModelInfo | null): Settings {
   if (out.think !== undefined && info && !info.thinking?.values.includes(out.think)) delete out.think;
   return out;
 }
+
+// An engine that doesn't report its context size: the latest reply offers to compact from this many tokens.
+const UNKNOWN_CONTEXT_OFFER = 2048;
+// Past this share of the context, the oldest messages are about to be left out (as StatsLine shows it).
+const NEARLY_FULL = 0.9;
+// The largest context a compaction accepts (see /api/chats/[id]/compact).
+const MAX_CONTEXT = 1_048_576;
 
 // What a run asks for: a new message, a new version of a sent message, a new version of a reply (by
 // another model once, with `with`), or a reply to a message that has none.
@@ -150,6 +157,8 @@ export function Chat({
   const [compacting, setCompacting] = useState(false);
   const compactRef = useRef<AbortController | null>(null);
   const sendAfterCompact = useRef(false);
+  // Shown while the summary is written: the message in the box waits for it (see sendDraft).
+  const [holding, setHolding] = useState(false);
   // The summary of a compacted chat, opened under its marker.
   const [summaryOpen, setSummaryOpen] = useState(false);
   // A message opened from search: scrolled into view and highlighted for a moment.
@@ -297,8 +306,9 @@ export function Chat({
     const content = draft.trim();
     if (!ready || temporaryFull || (!content && !pending.length)) return; // a draft that can't be sent yet stays in the box
     // Compacting first, when the chat asks for it: the message stays in the box until the summary is in.
-    if (!compacted && settings.autoCompact && nearlyFull(lastReply?.stats) && !compactedNow && canCompact) {
+    if (!compacted && settings.autoCompact && nearlyFullNow && !compactedNow && canCompact) {
       sendAfterCompact.current = true;
+      setHolding(true);
       void compact();
       return;
     }
@@ -334,11 +344,20 @@ export function Chat({
   const summaryAt = messages.findLastIndex((m) => m.summary);
   const lastQuestion = messages.findLastIndex((m) => m.role === "user");
   const lastReply = messages.findLast((m) => m.role === "assistant");
-  // Compacted since the latest reply, whose stats still count the messages now summarized. From half the
-  // context the latest reply offers to compact; once it is nearly full, the warning under it does.
+  // Compacted since the latest reply, whose stats still count the messages now summarized.
   const compactedNow = summaryAt >= 0 && summaryAt >= lastQuestion - 1;
   const canCompact = chatId !== null && online && !!model && !streaming && !loading && !compacting && compactionRange(messages) !== null;
-  const contextShare = lastReply?.stats?.contextSize ? lastReply.stats.contextUsed / lastReply.stats.contextSize : 0;
+  // Where the latest reply offers to compact: from half the context, until it is nearly full and the warning
+  // under it does. An engine that doesn't say how big its context is (OpenAI-compatible servers) offers it
+  // once the conversation is a few thousand tokens long; the warning and automatic compacting need the size.
+  const lastStats = lastReply?.stats;
+  const knownContext = lastStats?.contextSize ?? effectiveSettings.contextLength;
+  const contextFill = lastStats && knownContext ? lastStats.contextUsed / knownContext : null;
+  const nearlyFullNow = contextFill !== null && contextFill >= NEARLY_FULL;
+  const offerCompact = contextFill !== null ? contextFill >= 0.5 && !nearlyFullNow : (lastStats?.contextUsed ?? 0) >= UNKNOWN_CONTEXT_OFFER;
+  // The context a compaction plans its pieces for: the chat's own setting, or what the engine reported it
+  // loaded. Not the model's maximum: the model may be loaded with less. Unknown, the server assumes 4K.
+  const compactContext = effectiveSettings.contextLength ?? [...messages].reverse().find((m) => m.stats?.contextSize)?.stats?.contextSize;
 
   // What the attached text would take from the context the next reply has.
   const fileTokens = textTokens(pending);
@@ -379,7 +398,7 @@ export function Chat({
     setCompacting(true);
     setError(null);
     try {
-      const size = contextSize && Number.isInteger(contextSize) && contextSize >= 512 ? contextSize : undefined;
+      const size = compactContext && Number.isInteger(compactContext) ? Math.min(Math.max(compactContext, 512), MAX_CONTEXT) : undefined;
       const res = await fetch(`/api/chats/${chatId}/compact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -624,7 +643,10 @@ export function Chat({
   }));
   // A message held back for an automatic compaction goes once it is done (also when it failed: the
   // conversation is then sent as it is, like before).
-  const sendHeldMessage = useEffectEvent(() => sendDraft(true));
+  const sendHeldMessage = useEffectEvent(() => {
+    setHolding(false);
+    sendDraft(true);
+  });
   useEffect(() => {
     if (compacting || !sendAfterCompact.current) return;
     sendAfterCompact.current = false;
@@ -862,7 +884,7 @@ export function Chat({
                               Branch
                             </button>
                           )}
-                          {isLast && canCompact && contextShare >= 0.5 && !nearlyFull(m.stats) && !compactedNow && (
+                          {isLast && canCompact && offerCompact && !compactedNow && (
                             <button onClick={() => void compact()} title="Summarize the older messages to free context" className={actionClass}>
                               <CompactIcon width={14} height={14} />
                               Compact
@@ -871,7 +893,7 @@ export function Chat({
                           {m.stats && <StatsLine stats={m.stats} />}
                         </div>
                       )}
-                      {isLast && !streaming && !compacting && nearlyFull(m.stats) && !compactedNow && (
+                      {isLast && m === lastReply && !streaming && !compacting && nearlyFullNow && !compactedNow && (
                         <p className="mt-1 px-1.5 text-xs text-danger">
                           This chat is close to the model&apos;s context limit: the oldest messages will be left out.{" "}
                           {canCompact ? (
@@ -879,8 +901,9 @@ export function Chat({
                               <button onClick={() => void compact()} className="font-medium underline underline-offset-2 hover:text-fg">
                                 Compact the chat
                               </button>{" "}
-                              to have the model summarize them instead
-                              {settings.autoCompact ? "" : ", or turn on automatic compacting in the chat settings"}.
+                              {settings.autoCompact
+                                ? " now, or just send your next message: the chat is compacted before it goes."
+                                : " to have the model summarize them instead, or turn on automatic compacting in the chat settings."}
                             </>
                           ) : (
                             <>Start a new chat, or raise the context length in the chat settings if the model allows it.</>
@@ -898,8 +921,18 @@ export function Chat({
               {compacting && (
                 <div role="status" className="flex items-center gap-3 rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm">
                   <CompactIcon width={15} height={15} className="shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1 text-muted">Summarizing the older messages…</span>
-                  <button onClick={() => compactRef.current?.abort()} className={actionClass}>
+                  <span className="min-w-0 flex-1 text-muted">
+                    Summarizing the older messages…{holding && " Your message goes as soon as the summary is in."}
+                  </span>
+                  {/* Cancelling keeps the message in the box, unsent. */}
+                  <button
+                    onClick={() => {
+                      sendAfterCompact.current = false;
+                      setHolding(false);
+                      compactRef.current?.abort();
+                    }}
+                    className={actionClass}
+                  >
                     Cancel
                   </button>
                 </div>

@@ -98,6 +98,11 @@ describe("a database from before engines", () => {
     assert.deepEqual(env.db.prepare("SELECT count(*) AS n FROM engines").get().n, 0, "the built-in Ollama needs no row");
   });
 
+  it("adds the compaction summary column, empty: no old chat is compacted", async () => {
+    assert.ok(env.db.prepare("PRAGMA table_info(messages)").all().some((c) => c.name === "summary"));
+    assert.equal(env.db.prepare("SELECT count(*) AS n FROM messages WHERE summary IS NOT NULL").get().n, 0);
+  });
+
   it("lists the chats with their engine, settings and branch", async () => {
     const { chats } = (await env.api.json("/api/chats")).data;
     assert.deepEqual(

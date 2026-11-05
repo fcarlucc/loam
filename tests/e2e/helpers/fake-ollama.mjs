@@ -15,6 +15,7 @@ export const MODELS = {
   "thinker:latest": { size: 4_000_000_000, thinks: true }, // reasons out loud before replying, unless told not to (think: false)
   "seer:latest": { size: 5_000_000_000, sees: true }, // accepts images; the others refuse them like Ollama does
   "garbled:latest": { size: 600_000_000, garbles: true }, // streams a few words, then a line that isn't JSON
+  "terse:latest": { size: 700_000_000, terse: true }, // chats as usual, but answers nothing when not streaming (a summary)
 };
 export const NO_VISION_ERROR = "Multimodal data provided, but model does not support multimodal requests.";
 export const FLAKY_ERROR = "the fake model fell over";
@@ -156,7 +157,7 @@ export async function startFakeOllama() {
           return json(200, {
             model,
             created_at: now(),
-            message: { role: "assistant", content: text, ...(thought ? { thinking: thought } : {}) },
+            message: { role: "assistant", content: spec.terse ? "" : text, ...(thought ? { thinking: thought } : {}) },
             done: true,
             done_reason: "stop",
             ...timings,

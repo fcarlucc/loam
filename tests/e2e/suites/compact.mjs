@@ -1,7 +1,8 @@
 // Compacting a chat: the model summarizes the older messages, and from then on reads the summary instead.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { chat } from "../helpers/http.mjs";
+import { waitFor } from "../helpers/app.mjs";
+import { chat, readEvents } from "../helpers/http.mjs";
 
 const MODEL = "fake:latest";
 const HEADING = "Summary of the earlier part of this conversation.";
@@ -144,6 +145,63 @@ export function compactSuite(env) {
       assert.deepEqual(await branch(id), before);
     });
 
+    it("a piece summarized to nothing fails the compaction, and nothing is kept", async () => {
+      const id = await newChat(["a", "b", "c"]);
+      const before = await branch(id);
+      const r = await compact(id, { model: "terse:latest" });
+      assert.deepEqual([r.status, r.data.error], [502, "The model wrote an empty summary: nothing was changed"]);
+      assert.deepEqual(await branch(id), before);
+    });
+
+    it("cancelling a compaction stops the model and keeps nothing", async () => {
+      const id = await newChat(["a", "b", "c"]);
+      const from = env.ollama.requests.length;
+      const controller = new AbortController();
+      // The "loading" model takes 2.5 s before it answers: time enough to leave.
+      const pending = env.api.post(`/api/chats/${id}/compact`, { engine: "ollama", model: "loading:latest" }, { signal: controller.signal });
+      await waitFor(() => summarizing(from).length === 1, { what: "the summarizing request" });
+      controller.abort();
+      await assert.rejects(pending);
+      const [request] = summarizing(from);
+      await waitFor(() => request.aborted, { what: "the model to be stopped" });
+      await new Promise((r) => setTimeout(r, 2800)); // past the moment the model would have answered
+      assert.ok(env.db.raw.prepare("SELECT summary FROM messages WHERE chat_id = ?").all(id).every((m) => m.summary === null));
+    });
+
+    it("waits for a reply that is still streaming", async () => {
+      const id = await newChat(["a"]);
+      const res = await env.api.post("/api/chat", { chatId: id, content: "long", model: "slow:latest" });
+      assert.equal(res.status, 200);
+      const r = await compact(id);
+      assert.deepEqual([r.status, r.data.error], [409, "Wait for the reply to finish"]);
+      await env.api.post("/api/chat/stop", { chatId: id });
+      await readEvents(res);
+      assert.equal((await compact(id)).status, 200, "once it is over");
+    });
+
+    it("works with an OpenAI-compatible engine, whose context the page doesn't know", async () => {
+      let id = null;
+      for (const content of ["one", "two", "three"]) id = (await chat(env.api, { chatId: id, content, engine: env.openaiEngine, model: "fake-7b" })).id;
+      const from = env.openai.requests.length;
+      const r = await env.api.json(`/api/chats/${id}/compact`, { method: "POST", body: { engine: env.openaiEngine, model: "fake-7b" } });
+      assert.equal(r.status, 200);
+      const [request] = env.openai.requests.slice(from).filter((q) => q.path === "/v1/chat/completions");
+      assert.ok(!request.body.stream, "a whole answer, not a stream");
+      assert.match(request.body.messages[0].content, /^Summarize the conversation below/);
+      assert.deepEqual(r.data.messages.map((m) => !!m.summary), [false, false, false, true, false, false]);
+      await chat(env.api, { chatId: id, content: "four", engine: env.openaiEngine, model: "fake-7b" });
+      assert.match(env.openai.lastChat().body.messages[0].content, /Summary of the earlier part of this conversation/);
+    });
+
+    it("asks for the context it cut the pieces for, and reasoning off", async () => {
+      const id = await newChat(["a", "b"]);
+      const from = env.ollama.requests.length;
+      assert.equal((await compact(id, { model: "thinker:latest", contextSize: 2048 })).status, 200);
+      const [{ body }] = summarizing(from);
+      assert.equal(body.options.num_ctx, 2048);
+      assert.equal(body.think, false);
+    });
+
     it("refuses what it can't do", async () => {
       const id = await newChat(["a", "b"]);
       const cases = [
@@ -151,6 +209,7 @@ export function compactSuite(env) {
         [`/api/chats/${id}/compact`, { model: "" }, 400],
         [`/api/chats/${id}/compact`, { model: MODEL, contextSize: 100 }, 400],
         [`/api/chats/${id}/compact`, { model: MODEL, contextSize: "big" }, 400],
+        [`/api/chats/${id}/compact`, { model: MODEL, contextSize: 2_000_000 }, 400],
         [`/api/chats/${id}/compact`, { model: MODEL, engine: "nope" }, 404],
       ];
       for (const [path, body, status] of cases) {

@@ -5,6 +5,7 @@ import { attachmentContents, getChat, getKeepAlive, getMessage, getPath, setSumm
 import { acceptsModel, engineFailure, type ModelMessage, resolveEngine } from "@/lib/engines";
 import { generations } from "@/lib/generations";
 import { jsonError, readJson } from "@/lib/http";
+import { THINK_LEVELS } from "@/lib/settings";
 
 const DEFAULT_CONTEXT = 4096; // when neither the page nor the chat's settings know the model's context
 const SUMMARY_MAX_TOKENS = 1024;
@@ -47,18 +48,25 @@ export async function POST(request: Request, ctx: RouteContext<"/api/chats/[id]/
   const summaryTokens = Math.min(SUMMARY_MAX_TOKENS, Math.floor(contextSize / 4));
   let summary = previous;
   try {
+    // Reasoning off where it can be: a summary isn't worth thinking about. Some models only reason at a
+    // level (gpt-oss: low, medium, high); they get their lowest.
+    const levels = (await engine.modelInfo(model).catch(() => null))?.thinking?.values;
+    const think = !levels || levels.includes(false) ? false : (THINK_LEVELS.find((l) => levels.includes(l)) ?? false);
     for (const piece of chunks(covered, chunkBudget(contextSize, summaryTokens))) {
       const completion = await engine.complete({
         model,
         messages: [{ role: "user", content: summaryPrompt(summary, piece) }],
         maxTokens: summaryTokens,
         temperature: 0.2,
-        think: false,
-        contextLength: chat.settings.contextLength,
+        think,
+        // The context the pieces were cut for, so the request and the budget agree.
+        contextLength: contextSize,
         keepAlive: getKeepAlive(),
         signal: request.signal,
       });
-      summary = completion.content.trim() || summary;
+      // A piece summarized to nothing would be lost from the summary without a word: nothing is kept then.
+      summary = completion.content.trim();
+      if (!summary) return jsonError("The model wrote an empty summary: nothing was changed", 502);
     }
   } catch (e) {
     if (request.signal.aborted) return jsonError("Cancelled", 499);
