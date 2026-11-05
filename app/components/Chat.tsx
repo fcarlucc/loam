@@ -52,6 +52,17 @@ function describeError(e: unknown, accepted: boolean) {
   return e instanceof Error ? e.message : "Something went wrong";
 }
 
+// The settings as another model takes them, for a reply it writes once: the context length capped to its
+// window, and a reasoning setting it doesn't offer left out (it then reasons as it does by default). Unknown
+// details (an engine that can't tell) change nothing.
+function fitSettings(settings: Settings, info: ModelInfo | null): Settings {
+  const out = { ...settings };
+  const max = info?.contextMax;
+  if (out.contextLength !== undefined && max && out.contextLength > max) out.contextLength = max;
+  if (out.think !== undefined && info && !info.thinking?.values.includes(out.think)) delete out.think;
+  return out;
+}
+
 // What a run asks for: a new message, a new version of a sent message, a new version of a reply (by
 // another model once, with `with`), or a reply to a message that has none.
 type Action =
@@ -405,8 +416,17 @@ export function Chat({
     let text = ""; // the reply so far
     let failure: string | null = null;
     try {
-      // The context length was capped for the chat's model; another model gets the setting as it is.
-      const sent = oneOff ? settings : effectiveSettings;
+      // Another model's limits and reasoning levels aren't those of the chat's model: ask for them first.
+      const sent = oneOff
+        ? fitSettings(
+            settings,
+            await fetch(`/api/engines/${encodeURIComponent(target.engine)}/show?model=${encodeURIComponent(target.model)}`, {
+              signal: controller.signal,
+            })
+              .then((r) => (r.ok ? (r.json() as Promise<ModelInfo>) : null))
+              .catch(() => null),
+          )
+        : effectiveSettings;
       // A temporary chat sends the whole conversation, and keeps nothing: there is no chat model to keep.
       const res = temporary
         ? await fetch("/api/chat/temporary", {
@@ -676,10 +696,11 @@ export function Chat({
                       {m.thinking && <Reasoning text={m.thinking} live={streaming && isLast && !m.content} ms={m.stats?.thinkingMs} />}
                       {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && !m.thinking && <TypingDots />}
                       {m.content && !(streaming && isLast) && (
-                        // The latest reply, and replies with versions, always show their actions; others on hover or focus.
+                        // The latest reply, replies with versions and, in a chat written by several models, every reply
+                        // naming its model always show their actions; others on hover or focus.
                         <div
                           className={`mt-1 flex flex-wrap items-center gap-1 transition-opacity ${
-                            isLast || m.versions ? "" : "opacity-0 focus-within:opacity-100 group-hover/msg:opacity-100"
+                            isLast || m.versions || (severalModels && m.model) ? "" : "opacity-0 focus-within:opacity-100 group-hover/msg:opacity-100"
                           }`}
                         >
                           {m.versions && <VersionNav versions={m.versions} disabled={streaming} onSelect={showVersion} />}

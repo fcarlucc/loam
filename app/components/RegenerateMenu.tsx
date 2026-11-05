@@ -84,7 +84,9 @@ export function RegenerateMenu({
       close();
       return;
     }
+    // Tab leaves from the button, so focus goes on to the next control instead of falling off the page.
     if (e.key === "Tab") {
+      buttonRef.current?.focus();
       setPlace(null);
       return;
     }
@@ -106,7 +108,6 @@ export function RegenerateMenu({
         disabled={disabled || available.length === 0}
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        aria-haspopup="true"
         aria-label="Try another model"
         title="Regenerate with another model"
         className={className}
@@ -135,6 +136,7 @@ export function RegenerateMenu({
                   <button
                     key={m}
                     aria-current={isCurrent}
+                    title={isCurrent ? "The chat's model: the same as Regenerate" : undefined}
                     onClick={() => {
                       close();
                       onPick({ engine: engine.id, model: m });
