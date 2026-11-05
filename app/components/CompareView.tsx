@@ -169,7 +169,7 @@ export function CompareView({
                       {a.status === "waiting" ? "Waiting for the other model…" : a.status === "stopped" ? "Stopped" : ""}
                     </span>
                   </h3>
-                  {a.text ? <Markdown>{a.text}</Markdown> : a.status === "streaming" && <TypingDots />}
+                  {a.text ? <Markdown live={a.status === "streaming"}>{a.text}</Markdown> : a.status === "streaming" && <TypingDots />}
                   {a.status === "error" && (
                     <p role="alert" className="text-sm text-danger">
                       {a.error}

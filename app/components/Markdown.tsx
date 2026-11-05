@@ -1,14 +1,52 @@
 "use client";
 
-import { memo, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Element, ElementContent } from "hast";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
+import type { Options as KatexOptions } from "rehype-katex";
 import remarkGfm from "remark-gfm";
+import { preprocessMath } from "@/lib/math";
 import { CopyButton } from "./CopyButton";
+import { MermaidBlock } from "./Mermaid";
 
-const remarkPlugins = [remarkGfm];
-const rehypePlugins = [rehypeHighlight];
+// A formula KaTeX can't read shows as its source (rehype-katex retries with throwOnError: false).
+const katexOptions: KatexOptions = {
+  // Keeps \href, \includegraphics and the like from loading or linking anything.
+  trust: false,
+  strict: "ignore",
+  errorColor: "var(--fg-muted)",
+  maxSize: 50,
+};
+
+type Plugins = { remark: Options["remarkPlugins"]; rehype: Options["rehypePlugins"] };
+const plain: Plugins = { remark: [remarkGfm], rehype: [rehypeHighlight] };
+
+// KaTeX (its code, its stylesheet and its fonts) loads with the first reply that has math in it, not with
+// the app: most replies have none. Until then the formulas show as text.
+let withMath: Plugins | null = null;
+let loading: Promise<void> | null = null;
+const loaded = new Set<() => void>();
+function loadMath() {
+  loading ??= Promise.all([import("remark-math"), import("rehype-katex"), import("katex/dist/katex.min.css")])
+    .then(([{ default: remarkMath }, { default: rehypeKatex }]) => {
+      // KaTeX first, so math isn't taken for code to highlight.
+      withMath = { remark: [remarkGfm, remarkMath], rehype: [[rehypeKatex, katexOptions], rehypeHighlight] };
+      loaded.forEach((notify) => notify());
+    })
+    .catch(() => {
+      loading = null; // try again with the next reply
+    });
+}
+const onMathLoaded = (notify: () => void) => {
+  loaded.add(notify);
+  return () => loaded.delete(notify);
+};
+// After preprocessMath every formula is written with dollars; ```math blocks are drawn by KaTeX too.
+const HAS_MATH = /\$|^[ \t>]*(?:```|~~~)[ \t]*math\b/m;
+
+// The markdown being shown, for the code blocks to tell whether they are complete yet.
+const Source = createContext("");
 
 function toText(node: ElementContent): string {
   if (node.type === "text") return node.value;
@@ -21,20 +59,34 @@ function languageOf(code: Element | undefined) {
   return classes.find((c) => c.startsWith("language-"))?.slice(9) ?? "";
 }
 
-const components: Components = {
-  pre({ node, children }: { node?: Element; children?: ReactNode }) {
-    const code = node?.children.find((c): c is Element => c.type === "element" && c.tagName === "code");
-    const text = code ? toText(code).replace(/\n$/, "") : "";
+function CodeBlock({ node, children }: { node?: Element; children?: ReactNode }) {
+  const source = useContext(Source);
+  const code = node?.children.find((c): c is Element => c.type === "element" && c.tagName === "code");
+  const text = code ? toText(code).replace(/\n$/, "") : "";
+  const language = languageOf(code);
+  if (language === "mermaid") {
+    // A block still streaming in has no closing fence yet: it runs to the end of the reply.
+    const end = node?.position?.end.offset;
+    const complete = end !== undefined && /\n[ \t>]*(`{3,}|~{3,})[ \t]*$/.test(source.slice(0, end));
     return (
-      <div className="code-block">
-        <div className="code-block-header">
-          <span className="font-mono">{languageOf(code) || "text"}</span>
-          <CopyButton text={text} label="Copy code" />
-        </div>
-        <pre>{children}</pre>
-      </div>
+      <MermaidBlock code={text} complete={complete}>
+        {children}
+      </MermaidBlock>
     );
-  },
+  }
+  return (
+    <div className="code-block">
+      <div className="code-block-header">
+        <span className="font-mono">{language || "text"}</span>
+        <CopyButton text={text} label="Copy code" />
+      </div>
+      <pre>{children}</pre>
+    </div>
+  );
+}
+
+const components: Components = {
+  pre: CodeBlock,
   a({ href, children }) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer">
@@ -61,13 +113,50 @@ const components: Components = {
   },
 };
 
-// Memoized so earlier messages don't re-parse on every streamed token.
-export const Markdown = memo(function Markdown({ children }: { children: string }) {
-  return (
-    <div className="prose-chat">
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components}>
-        {children}
-      </ReactMarkdown>
-    </div>
+// While a reply streams, its text is drawn at most every LIVE_MS: each draw redraws every formula of the reply.
+// Measured on the production build with a reply of 66 formulas at 100 tokens/s: 10.5 ms of main thread a token
+// without this (the page busy 85% of the time), 5.7 ms with it; plain text 3.3 and 1.7 ms. At 20 tokens/s
+// nothing changes (about 18 ms a token): a token every 50 ms is drawn anyway. The last text always shows once
+// the stream ends.
+const LIVE_MS = 50;
+
+function useThrottled(value: string, live: boolean) {
+  const [shown, setShown] = useState(value);
+  const drawnAt = useRef(0);
+  useEffect(() => {
+    if (!live) return;
+    const timer = setTimeout(
+      () => {
+        drawnAt.current = Date.now();
+        setShown(value);
+      },
+      Math.max(0, drawnAt.current + LIVE_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [value, live]);
+  return live ? shown : value;
+}
+
+// Memoized so earlier messages don't re-parse on every streamed token. `live`: the reply is still streaming.
+export const Markdown = memo(function Markdown({ children, live = false }: { children: string; live?: boolean }) {
+  const shown = useThrottled(children, live);
+  const math = useSyncExternalStore(onMathLoaded, () => withMath, () => null);
+  const source = useMemo(() => preprocessMath(shown), [shown]);
+  const needsMath = HAS_MATH.test(source);
+  useEffect(() => {
+    if (needsMath && !math) loadMath();
+  }, [needsMath, math]);
+  const plugins = math && needsMath ? math : plain;
+  // Parsed again only when the text shown changes: a token that arrives between two draws costs nothing.
+  const content = useMemo(
+    () => (
+      <Source.Provider value={source}>
+        <ReactMarkdown remarkPlugins={plugins.remark} rehypePlugins={plugins.rehype} components={components}>
+          {source}
+        </ReactMarkdown>
+      </Source.Provider>
+    ),
+    [source, plugins],
   );
+  return <div className="prose-chat">{content}</div>;
 });

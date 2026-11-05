@@ -14,15 +14,20 @@
     "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/*.test.mjs\"",
     "typecheck": "next typegen && tsc --noEmit",
     "test:api": "node --test --test-concurrency=1 tests/e2e/api.test.mjs tests/e2e/migration.test.mjs",
+    "test:unit": "node --test --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON \"tests/unit/*.test.mjs\"",
     "test:ui": "playwright test"
   },
   "dependencies": {
+    "katex": "^0.16.47",
+    "mermaid": "^12.2.0",
     "next": "16.3.8",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1"
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

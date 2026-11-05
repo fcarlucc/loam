@@ -10,7 +10,11 @@ enforced, and how to report a problem.
 - **Only you can reach the app.** The server listens on `127.0.0.1`, so other devices on your network can't connect.
 - **Other websites can't use it.** The API rejects requests whose `Host` isn't local (DNS rebinding) and changes that
   don't come from the app's own page (CSRF).
-- **Replies can't phone home.** Images in model replies are shown as links and never loaded automatically.
+- **Replies can't phone home.** Images in model replies are shown as links and never loaded automatically. Math and
+  Mermaid diagrams are drawn by libraries bundled with the app; a diagram is cleaned of images, outside links and
+  styles that point elsewhere before it is shown, and the page's Content Security Policy makes the browser refuse
+  anything from anywhere but the app (images, fonts, styles, media, fetches, frames, workers), whatever a reply
+  contains.
 - **Deleted means deleted.** Deleting a chat also wipes its text from the database files (SQLite `secure_delete`).
 - **Temporary chats leave no trace.** A temporary chat is never written to the database: the page holds it in memory
   and it is gone once you leave it. Its notifications don't quote it.
@@ -24,8 +28,10 @@ compiles.
 
 The promise is tested, not just stated. `npm run test:api` starts the app as a user would, with a throwaway database and
 a fake Ollama and a fake OpenAI-compatible server, and checks the loopback-only binding, the `Host` and `Origin`
-guards on every API route (new routes included), that engine URLs on other machines are refused, that deleted
-chats are gone from the files, and that a temporary chat writes nothing. The tests run on every push (see the CI badge in the README).
+guards on every API route (new routes included), that engine URLs on other machines are refused, that the page sends
+its Content Security Policy, that deleted chats are gone from the files, and that a temporary chat writes nothing.
+The browser tests (`npm run test:ui`) fail if the page requests anything outside the app, among them replies whose
+math and diagrams point elsewhere. The tests run on every push (see the CI badge in the README).
 
 ## Known limits
 

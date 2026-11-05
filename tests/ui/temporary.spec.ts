@@ -111,8 +111,10 @@ test("a temporary chat's files go with every message and open from the page", as
   // The file opens from the page itself: the server never had it.
   const link = userMessages(page).last().getByRole("link", { name: /notes\.txt/ });
   await expect(link).toHaveAttribute("href", /^blob:/);
-  const opened = await link.evaluate(async (a) => (await fetch((a as HTMLAnchorElement).href)).text());
-  expect(opened).toBe("Remember the milk.\n");
+  // Opened the way a user does, in a new tab (the page's CSP keeps fetch() to the app, so not by reading it).
+  const [tab] = await Promise.all([page.waitForEvent("popup"), link.click()]);
+  await expect(tab.locator("body")).toHaveText("Remember the milk.");
+  await tab.close();
 
   // A later message sends it again, inside the first one.
   const second = unique("later");
