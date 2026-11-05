@@ -5,7 +5,8 @@ export type Role = "user" | "assistant";
 export type ThinkValue = boolean | "low" | "medium" | "high" | "xhigh";
 
 // Per-chat generation settings. Unset fields use the model's own defaults.
-export type ChatSettings = { system?: string; temperature?: number; contextLength?: number; think?: ThinkValue };
+// `autoCompact`: compact the chat before sending when its context is nearly full (see lib/compact.ts).
+export type ChatSettings = { system?: string; temperature?: number; contextLength?: number; think?: ThinkValue; autoCompact?: true };
 
 // Measured by the engine for one reply.
 export type ReplyStats = {
@@ -54,6 +55,8 @@ export type NewAttachment = { name: string; type: string; kind: AttachmentKind; 
 // A message on the chat's active branch. `id` is missing until the server has saved it.
 // `thinking` is what a reasoning model thought before the reply: shown, never sent back to the model.
 // `copied` marks the messages a branched chat started with (copied from the chat it was branched off).
+// `summary`, when the chat was compacted here, sums up the branch up to this message: the model reads it
+// instead of those messages (see lib/compact.ts).
 export type ChatMessage = {
   id?: number;
   role: Role;
@@ -63,6 +66,7 @@ export type ChatMessage = {
   stats?: ReplyStats;
   versions?: Versions;
   copied?: boolean;
+  summary?: string;
 };
 
 // Events streamed by /api/chat, one JSON object per line.

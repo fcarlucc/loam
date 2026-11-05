@@ -42,6 +42,8 @@ Loam is the one in between: a fast, polished app for one person, the way I like 
 - Reasoning models: turn reasoning off, on or to a level per chat, and read what the model thought
 - Text, code and image attachments, kept with the chat and deleted with it
 - Per-chat system prompt, temperature and context length
+- Compact a long chat: the model summarizes the older messages to free its context, by hand or automatically when
+  the context is nearly full; the summary can be read and undone
 - Speed, tokens and context use under every reply
 
 **History**

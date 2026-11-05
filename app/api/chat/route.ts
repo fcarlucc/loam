@@ -1,5 +1,6 @@
 import { inlineFiles, parseAttachments } from "@/lib/attachments";
 import { isModelId } from "@/lib/catalog";
+import { compactedView, systemContent } from "@/lib/compact";
 import {
   addAttachments,
   addMessage,
@@ -93,7 +94,9 @@ export async function POST(request: Request) {
     const { files, images } = attachmentContents(m.id);
     return { role: m.role, content: inlineFiles(m.content, files), ...(canSee && images.length ? { images } : {}) };
   };
-  const history: ModelMessage[] = chat && branchEnd !== null ? getPath(chat.id, branchEnd).map(toModelMessage) : [];
+  // In a compacted chat the model reads the summary instead of the messages it covers.
+  const view = compactedView(chat && branchEnd !== null ? getPath(chat.id, branchEnd) : []);
+  const history: ModelMessage[] = view.messages.map(toModelMessage);
   if (sending) {
     // An edit without new files keeps the files of the message it replaces (they are copied when it is saved).
     const kept = editOf !== null && !attachments.length ? attachmentContents(editOf) : undefined;
@@ -103,7 +106,8 @@ export async function POST(request: Request) {
   }
   if (history.at(-1)?.role !== "user") return jsonError("Nothing to reply to", 400);
 
-  const messages: ModelMessage[] = settings.system ? [{ role: "system", content: settings.system }, ...history] : history;
+  const system = systemContent(settings.system, view.summary);
+  const messages: ModelMessage[] = system ? [{ role: "system", content: system }, ...history] : history;
 
   const upstream = new AbortController();
   // The client left (other chat, closed tab): stop the engine too, even while the model is still loading.
