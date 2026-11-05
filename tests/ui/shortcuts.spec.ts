@@ -188,7 +188,7 @@ test("the shortcuts list opens with ⌘/ wherever / is on the keyboard", async (
   await as(page, "mac");
   await openApp(page);
   const list = page.getByRole("dialog", { name: "Keyboard shortcuts" });
-  const press = (init: KeyboardEventInit) =>
+  const press = (init: { key: string; code: string; shiftKey?: boolean; metaKey?: boolean }) =>
     page.evaluate((init) => document.body.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })), init);
 
   // An Italian keyboard: the US "/" key types "-" (that's ⌘- to zoom out, left to the browser)…
