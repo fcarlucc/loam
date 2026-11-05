@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { BUILTIN_OLLAMA_ID } from "@/lib/engines/presets";
 import { isMac, keysOf, matches, SHORTCUTS, type ShortcutId } from "@/lib/shortcuts";
 import { getPref, setPref, type ThemePref } from "@/lib/theme";
@@ -30,6 +30,74 @@ function savedChoice(): ModelChoice | null {
 }
 
 const offers = (engines: EngineModels[], c: ModelChoice) => engines.some((e) => e.id === c.engine && e.models.includes(c.model));
+
+// What the palette offers, given the chat's state when it opened. Chats and models are found by their ids
+// ("chat:12", "model:[engine, model]"), which AppShell's runCommand reads back.
+function paletteItems({
+  chat,
+  chats,
+  engines,
+  choice,
+  openChatId,
+  canManageModels,
+}: {
+  chat: ReturnType<ChatHandle["state"]> | undefined; // undefined when no chat is on screen
+  chats: ChatSummary[];
+  engines: EngineModels[];
+  choice: ModelChoice;
+  openChatId: number | null;
+  canManageModels: boolean;
+}) {
+  const theme = getPref();
+  const commands: Command[] = [
+    { id: "new-chat", group: "Actions", label: "New chat", keys: keysOf("newChat") },
+    { id: "search", group: "Actions", label: "Search chats", keys: keysOf("search"), keywords: "find messages" },
+    ...(chat?.streaming ? [] : [{ id: "model", group: "Actions", label: "Change model…", keys: keysOf("model"), keywords: "switch engine", opens: "models" as const }]),
+    ...(chat?.canRegenerate
+      ? [{ id: "regenerate", group: "Actions", label: "Regenerate the latest reply", keys: keysOf("regenerate"), keywords: "retry again" }]
+      : []),
+    ...(chat?.streaming ? [{ id: "stop", group: "Actions", label: "Stop generating", keys: keysOf("stop") }] : []),
+    ...(chat ? [{ id: "settings", group: "Actions", label: "Chat settings", keywords: "system prompt temperature context reasoning" }] : []),
+    { id: "composer", group: "Actions", label: "Focus the message box", keys: keysOf("focusComposer"), keywords: "write type" },
+    { id: "compare", group: "Go to", label: "Compare models", keywords: "side by side" },
+    { id: "dashboard", group: "Go to", label: "Usage & benchmark", keywords: "stats speed dashboard" },
+    ...(canManageModels ? [{ id: "models", group: "Go to", label: "Models & memory", keywords: "download delete unload" }] : []),
+    { id: "engines", group: "Go to", label: "Engines", keywords: "ollama lm studio llama.cpp mlx server" },
+    { id: "theme:light", group: "Theme", label: "Light theme", current: theme === "light" },
+    { id: "theme:dark", group: "Theme", label: "Dark theme", current: theme === "dark" },
+    { id: "theme:system", group: "Theme", label: "Match system theme", current: theme === "system" },
+    { id: "help", group: "Help", label: "Keyboard shortcuts", keys: keysOf("help") },
+  ];
+  const chatItems: Command[] = chats.map((c) => ({
+    id: `chat:${c.id}`,
+    group: "Chats",
+    label: c.title,
+    current: c.id === openChatId,
+  }));
+  const online = engines.filter((e) => e.online);
+  const modelItems: Command[] = chat?.streaming
+    ? []
+    : online.flatMap((e) =>
+        e.models.map((m) => ({
+          id: `model:${JSON.stringify([e.id, m])}`,
+          group: "Models",
+          label: m,
+          hint: online.length > 1 ? e.name : undefined,
+          keywords: e.name,
+          current: e.id === choice.engine && m === choice.model,
+        })),
+      );
+  return { commands, chats: chatItems, models: modelItems };
+}
+
+// Escape stops a reply when it comes from the chat itself (the message box, the conversation, or the page as
+// a whole), not when it closes or cancels something of its own: the sidebar's search, a rename, a drawer.
+function escapeStops(target: EventTarget | null) {
+  if (!(target instanceof Element) || target === document.body) return true;
+  if (target.closest("aside")) return false;
+  if (target.matches('textarea[aria-label="Message"]')) return true;
+  return !!target.closest("main") && !target.matches("input, textarea, select, [contenteditable]");
+}
 
 export function AppShell() {
   const { engines, loaded: enginesLoaded, refresh: refreshEngines } = useEngines();
@@ -250,57 +318,12 @@ export function AppShell() {
     else if (is("help")) handle(() => setShortcutsOpen(true));
     else if (is("focusComposer")) handle(focusComposer);
     else if (is("regenerate") && screen === "chat") handle(() => chatRef.current?.regenerate());
-    else if (is("stop") && screen === "chat" && chat?.streaming) handle(() => chatRef.current?.stop());
+    else if (is("stop") && screen === "chat" && chat?.streaming && escapeStops(e.target)) handle(() => chatRef.current?.stop());
   });
   useEffect(() => {
     document.addEventListener("keydown", onShortcut);
     return () => document.removeEventListener("keydown", onShortcut);
   }, []);
-
-  // What the palette offers, given the chat's state when it opened. Chats and models are found by their
-  // ids ("chat:12", "model:[engine, model]"), which runCommand reads back.
-  function paletteItems(chat: ReturnType<ChatHandle["state"]> | undefined) {
-    const theme = getPref();
-    const commands: Command[] = [
-      { id: "new-chat", group: "Actions", label: "New chat", keys: keysOf("newChat") },
-      { id: "search", group: "Actions", label: "Search chats", keys: keysOf("search"), keywords: "find messages" },
-      ...(chat?.streaming ? [] : [{ id: "model", group: "Actions", label: "Change model…", keys: keysOf("model"), keywords: "switch engine", opens: "models" as const }]),
-      ...(chat?.canRegenerate
-        ? [{ id: "regenerate", group: "Actions", label: "Regenerate the latest reply", keys: keysOf("regenerate"), keywords: "retry again" }]
-        : []),
-      ...(chat?.streaming ? [{ id: "stop", group: "Actions", label: "Stop generating", keys: keysOf("stop") }] : []),
-      ...(chat ? [{ id: "settings", group: "Actions", label: "Chat settings", keywords: "system prompt temperature context reasoning" }] : []),
-      { id: "composer", group: "Actions", label: "Focus the message box", keys: keysOf("focusComposer"), keywords: "write type" },
-      { id: "compare", group: "Go to", label: "Compare models", keywords: "side by side" },
-      { id: "dashboard", group: "Go to", label: "Usage & benchmark", keywords: "stats speed dashboard" },
-      ...(managed ? [{ id: "models", group: "Go to", label: "Models & memory", keywords: "download delete unload" }] : []),
-      { id: "engines", group: "Go to", label: "Engines", keywords: "ollama lm studio llama.cpp mlx server" },
-      { id: "theme:light", group: "Theme", label: "Light theme", current: theme === "light" },
-      { id: "theme:dark", group: "Theme", label: "Dark theme", current: theme === "dark" },
-      { id: "theme:system", group: "Theme", label: "Match system theme", current: theme === "system" },
-      { id: "help", group: "Help", label: "Keyboard shortcuts", keys: keysOf("help") },
-    ];
-    const chatItems: Command[] = chats.map((c) => ({
-      id: `chat:${c.id}`,
-      group: "Chats",
-      label: c.title,
-      current: c.id === view.id && screen === "chat",
-    }));
-    const online = engines.filter((e) => e.online);
-    const modelItems: Command[] = chat?.streaming
-      ? []
-      : online.flatMap((e) =>
-          e.models.map((m) => ({
-            id: `model:${JSON.stringify([e.id, m])}`,
-            group: "Models",
-            label: m,
-            hint: online.length > 1 ? e.name : undefined,
-            keywords: e.name,
-            current: e.id === choice.engine && m === choice.model,
-          })),
-        );
-    return { commands, chats: chatItems, models: modelItems };
-  }
 
   function runCommand(id: string) {
     if (id.startsWith("chat:")) return open(Number(id.slice(5)));
@@ -329,6 +352,14 @@ export function AppShell() {
   const branchOf = current?.branch_of != null ? chats.find((c) => c.id === current.branch_of) : undefined;
   // The models panel manages the Ollama in use, or the built-in one when another kind of engine is selected.
   const managed = engine?.kind === "ollama" ? engine : engines.find((e) => e.id === BUILTIN_OLLAMA_ID);
+
+  // Built again only when what it lists changes, not on every status poll, so the list keeps its place.
+  const openChatId = screen === "chat" ? view.id : null;
+  const canManageModels = !!managed;
+  const paletteContent = useMemo(
+    () => palette && paletteItems({ chat: palette.chat, chats, engines, choice, openChatId, canManageModels }),
+    [palette, chats, engines, choice, openChatId, canManageModels],
+  );
 
   const sidebar = (
     <Sidebar
@@ -416,7 +447,7 @@ export function AppShell() {
       )}
       {enginesOpen && <EnginesDialog engines={engines} onClose={() => setEnginesOpen(false)} onChanged={() => void refreshEngines()} />}
       {palette && (
-        <CommandPalette {...paletteItems(palette.chat)} initialMode={palette.mode} onRun={runCommand} onClose={() => setPalette(null)} />
+        <CommandPalette {...paletteContent!} initialMode={palette.mode} onRun={runCommand} onClose={() => setPalette(null)} />
       )}
       {shortcutsOpen && (
         <ShortcutsDialog

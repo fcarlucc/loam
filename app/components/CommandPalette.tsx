@@ -89,10 +89,11 @@ export function CommandPalette({
   const optionId = (c: Command) => `${listId}-${c.id}`;
 
   // Keep the highlighted entry in view while moving through the list.
+  // By id: the lists are rebuilt when chats or engines change, and that alone mustn't move the list.
+  const currentId = current?.id;
   useEffect(() => {
-    if (current) document.getElementById(optionId(current))?.scrollIntoView({ block: "nearest" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- optionId only depends on listId
-  }, [current]);
+    if (currentId) document.getElementById(`${listId}-${currentId}`)?.scrollIntoView({ block: "nearest" });
+  }, [listId, currentId]);
 
   function finish(command?: Command) {
     dialogRef.current?.close();

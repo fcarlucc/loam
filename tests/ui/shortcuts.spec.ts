@@ -159,3 +159,63 @@ test("on a Mac, Ctrl+K does nothing", async ({ page }) => {
   await page.keyboard.press("Meta+k");
   await expect(option(page, /New chat/)).toContainText("⇧⌘O");
 });
+
+test("Escape that closes or clears something else doesn't stop the reply", async ({ page, ollama }) => {
+  await as(page, "mac");
+  await openApp(page);
+  await chooseModel(page, "slow:latest");
+  const text = unique("keeps going");
+  await send(page, text);
+  await expect(lastReply(page)).toContainText("tick 2");
+
+  // Clearing the sidebar's search with Escape leaves the reply streaming.
+  const search = page.getByRole("searchbox", { name: "Search chats" });
+  await search.fill("something");
+  await search.press("Escape");
+  await expect(search).toHaveValue("");
+  await expect(lastReply(page)).toContainText("tick 30");
+  await expect(stopButton(page)).toBeVisible();
+  const [request] = ollama.chats().filter((r) => r.body.messages?.at(-1)?.content === text);
+  expect(request.aborted).toBe(false);
+
+  // From the message box, Escape stops it.
+  await composer(page).press("Escape");
+  await expect(sendButton(page)).toBeVisible();
+  await expect.poll(() => request.aborted).toBe(true);
+});
+
+test("the shortcuts list opens with ⌘/ wherever / is on the keyboard", async ({ page }) => {
+  await as(page, "mac");
+  await openApp(page);
+  const list = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+  const press = (init: KeyboardEventInit) =>
+    page.evaluate((init) => document.body.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init })), init);
+
+  // An Italian keyboard: the US "/" key types "-" (that's ⌘- to zoom out, left to the browser)…
+  await press({ key: "-", code: "Slash", metaKey: true });
+  await expect(list).toHaveCount(0);
+  // …and "/" is ⇧7.
+  await press({ key: "/", code: "Digit7", shiftKey: true, metaKey: true });
+  await expect(list).toBeVisible();
+});
+
+test("the palette opens the chat settings and the other screens and dialogs", async ({ page }) => {
+  await as(page, "mac");
+  await openApp(page);
+  const run = async (query: string) => {
+    await page.keyboard.press("Meta+k");
+    await paletteInput(page).fill(query);
+    await page.keyboard.press("Enter");
+    await expect(palette(page)).toHaveCount(0);
+  };
+
+  await run("chat settings");
+  await expect(page.getByRole("button", { name: /^Chat settings/ })).toHaveAttribute("aria-expanded", "true");
+  await run("chat settings");
+  await expect(page.getByRole("button", { name: /^Chat settings/ })).toHaveAttribute("aria-expanded", "false");
+
+  await run("compare");
+  await expect(page.getByRole("heading", { name: "Compare models" })).toBeVisible();
+  await run("engines");
+  await expect(page.getByRole("dialog", { name: /Engines/ })).toBeVisible();
+});
