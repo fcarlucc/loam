@@ -840,7 +840,7 @@ export function Chat({
                       }`}
                     >
                       {m.thinking && <Reasoning text={m.thinking} live={streaming && isLast && !m.content} ms={m.stats?.thinkingMs} />}
-                      {m.content ? <Markdown>{m.content}</Markdown> : streaming && isLast && !m.thinking && <TypingDots />}
+                      {m.content ? <Markdown live={streaming && isLast}>{m.content}</Markdown> : streaming && isLast && !m.thinking && <TypingDots />}
                       {m.content && !(streaming && isLast) && (
                         // The latest reply, replies with versions and, in a chat written by several models, every reply
                         // naming its model always show their actions; others on hover or focus.

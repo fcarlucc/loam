@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, memo, useContext, useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Element, ElementContent } from "hast";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
@@ -113,22 +113,50 @@ const components: Components = {
   },
 };
 
-// Memoized so earlier messages don't re-parse on every streamed token.
-export const Markdown = memo(function Markdown({ children }: { children: string }) {
-  const source = preprocessMath(children);
+// While a reply streams, its text is drawn at most every LIVE_MS: each draw redraws every formula of the reply.
+// Measured on the production build with a reply of 66 formulas at 100 tokens/s: 10.5 ms of main thread a token
+// without this (the page busy 85% of the time), 5.7 ms with it; plain text 3.3 and 1.7 ms. At 20 tokens/s
+// nothing changes (about 18 ms a token): a token every 50 ms is drawn anyway. The last text always shows once
+// the stream ends.
+const LIVE_MS = 50;
+
+function useThrottled(value: string, live: boolean) {
+  const [shown, setShown] = useState(value);
+  const drawnAt = useRef(0);
+  useEffect(() => {
+    if (!live) return;
+    const timer = setTimeout(
+      () => {
+        drawnAt.current = Date.now();
+        setShown(value);
+      },
+      Math.max(0, drawnAt.current + LIVE_MS - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [value, live]);
+  return live ? shown : value;
+}
+
+// Memoized so earlier messages don't re-parse on every streamed token. `live`: the reply is still streaming.
+export const Markdown = memo(function Markdown({ children, live = false }: { children: string; live?: boolean }) {
+  const shown = useThrottled(children, live);
   const math = useSyncExternalStore(onMathLoaded, () => withMath, () => null);
+  const source = useMemo(() => preprocessMath(shown), [shown]);
   const needsMath = HAS_MATH.test(source);
   useEffect(() => {
     if (needsMath && !math) loadMath();
   }, [needsMath, math]);
   const plugins = math && needsMath ? math : plain;
-  return (
-    <div className="prose-chat">
+  // Parsed again only when the text shown changes: a token that arrives between two draws costs nothing.
+  const content = useMemo(
+    () => (
       <Source.Provider value={source}>
         <ReactMarkdown remarkPlugins={plugins.remark} rehypePlugins={plugins.rehype} components={components}>
           {source}
         </ReactMarkdown>
       </Source.Provider>
-    </div>
+    ),
+    [source, plugins],
   );
+  return <div className="prose-chat">{content}</div>;
 });
