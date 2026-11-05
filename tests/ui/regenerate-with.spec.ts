@@ -102,3 +102,26 @@ test("another model gets the settings as it can take them", async ({ page, api, 
   expect(request.body.think).toBeUndefined();
   expect(request.body.options?.num_ctx).toBe(8192);
 });
+
+test("in a temporary chat, another model writes the reply too, and nothing is saved", async ({ page, api, ollama }) => {
+  await openApp(page);
+  await expect(modelPicker(page)).toContainText("fake:latest");
+  const chatsBefore = (await (await api.get("/api/chats")).json()).chats.length;
+  await page.getByRole("button", { name: "Temporary chat" }).click();
+  const text = unique("temporary");
+  await ask(page, text);
+
+  await menuButton(page).click();
+  await menu(page).getByRole("button", { name: "seer:latest", exact: true }).click();
+  await expect(sendButton(page)).toBeVisible();
+  expect(requestsFor(ollama, say(text)).map((r) => r.body.model)).toEqual(["fake:latest", "seer:latest"]);
+  // A temporary chat keeps no versions: the reply is replaced, and the picker keeps the chat's model.
+  await expect(replies(page)).toHaveCount(1);
+  await expect(modelPicker(page)).toContainText("fake:latest");
+
+  // The next reply comes from the chat's model, and each reply names its own.
+  await ask(page, unique("next"));
+  await expect(replies(page).first().getByTestId("reply-model")).toHaveText("seer:latest");
+  await expect(lastReply(page).getByTestId("reply-model")).toHaveText("fake:latest");
+  expect((await (await api.get("/api/chats")).json()).chats.length).toBe(chatsBefore);
+});
