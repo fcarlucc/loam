@@ -124,3 +124,32 @@ test("with an engine that doesn't report its context, the latest reply still off
     await openai.close();
   }
 });
+
+test("the command palette compacts a chat, and only one that can be", async ({ page, api }) => {
+  // The test browser reports Windows, so the palette opens with Ctrl+K (see tests/ui/shortcuts.spec.ts).
+  const searchPalette = async (query: string) => {
+    await page.keyboard.press("Control+k");
+    await page.getByRole("combobox", { name: "Command", exact: true }).fill(query);
+  };
+  const entry = page.getByRole("option", { name: "Compact chat" });
+
+  await openApp(page);
+  await searchPalette("compact");
+  await expect(entry).toHaveCount(0); // a new chat has nothing to compact
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Temporary chat" }).click();
+  await ask(page, unique("temporary"));
+  await searchPalette("compact");
+  await expect(entry).toHaveCount(0); // a temporary chat is never compacted
+  await page.keyboard.press("Escape");
+
+  const tag = unique("palette");
+  await fullChat(api, tag);
+  await openChat(page, tag); // reloads the page, so the sidebar lists the chat made through the API
+  await searchPalette("compact");
+  await expect(entry).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("summary-note")).toBeVisible();
+  await searchPalette("compact");
+  await expect(entry).toHaveCount(0); // just compacted: nothing new to fold
+});

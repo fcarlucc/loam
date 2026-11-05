@@ -58,6 +58,7 @@ function paletteItems({
       ? [{ id: "regenerate", group: "Actions", label: "Regenerate the latest reply", keys: keysOf("regenerate"), keywords: "retry again" }]
       : []),
     ...(chat?.streaming ? [{ id: "stop", group: "Actions", label: "Stop generating", keys: keysOf("stop") }] : []),
+    ...(chat?.canCompact ? [{ id: "compact", group: "Actions", label: "Compact chat", keywords: "summarize context free shorten" }] : []),
     ...(chat ? [{ id: "settings", group: "Actions", label: "Chat settings", keywords: "system prompt temperature context reasoning" }] : []),
     { id: "composer", group: "Actions", label: "Focus the message box", keys: keysOf("focusComposer"), keywords: "write type" },
     { id: "compare", group: "Go to", label: "Compare models", keywords: "side by side" },
@@ -345,6 +346,7 @@ export function AppShell() {
       regenerate: () => chatRef.current?.regenerate(),
       stop: () => chatRef.current?.stop(),
       settings: () => chatRef.current?.toggleSettings(),
+      compact: () => chatRef.current?.compact(),
       composer: focusComposer,
       compare: () => setScreen("compare"),
       dashboard: () => setScreen("dashboard"),

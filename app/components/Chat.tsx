@@ -91,7 +91,8 @@ export type ChatHandle = {
   regenerate: () => void;
   stop: () => void;
   toggleSettings: () => void;
-  state: () => { streaming: boolean; canRegenerate: boolean };
+  compact: () => void;
+  state: () => { streaming: boolean; canRegenerate: boolean; canCompact: boolean };
 };
 
 export function Chat({
@@ -639,7 +640,8 @@ export function Chat({
     },
     stop: () => void stop(),
     toggleSettings,
-    state: () => ({ streaming, canRegenerate: regenerable !== null }),
+    compact: () => void compact(),
+    state: () => ({ streaming, canRegenerate: regenerable !== null, canCompact: canCompact && !compactedNow }),
   }));
   // A message held back for an automatic compaction goes once it is done (also when it failed: the
   // conversation is then sent as it is, like before).
